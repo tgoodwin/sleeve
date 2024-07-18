@@ -1,4 +1,4 @@
-module github.com/tgoodwin/sleeveless/client
+module github.com/tgoodwin/sleeve
 
 go 1.21
 
