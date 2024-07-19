@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -62,6 +64,8 @@ type Client struct {
 	rootID string
 
 	logger logr.Logger
+
+	visibilityDelayByKind map[string]time.Duration
 }
 
 var _ client.Client = &Client{}
@@ -79,6 +83,11 @@ func Wrap(c client.Client) *Client {
 
 func (c *Client) WithName(name string) *Client {
 	c.id = name
+	return c
+}
+
+func (c *Client) WithDelay(kind schema.GroupKind, duration time.Duration) *Client {
+	c.visibilityDelayByKind[kind.String()] = duration
 	return c
 }
 
@@ -183,7 +192,6 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 	res := c.Client.Create(ctx, obj, opts...)
 	c.logObservation(RecordSingle(obj), CREATE)
 	return res
-
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
@@ -194,10 +202,42 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	res := c.Client.Get(ctx, key, obj, opts...)
+	// cast back to a client.Ojbject
+	objCopy, ok := obj.DeepCopyObject().(client.Object)
+	if !ok {
+		panic("object does not implement client.Object")
+	}
+
+	if err := c.Client.Get(ctx, key, objCopy, opts...); err != nil {
+		return err
+	}
+	isVisible := c.isVisible(objCopy)
+	if !isVisible {
+		return apierrors.NewNotFound(schema.GroupResource{}, key.Name)
+	}
+	err := c.Client.Get(ctx, key, obj, opts...)
 	c.setRootContext(obj)
 	c.logObservation(RecordSingle(obj), GET)
-	return res
+	return err
+}
+
+func (c *Client) isVisible(obj client.Object) bool {
+	kind := obj.GetObjectKind().GroupVersionKind().String()
+	if visDelay, ok := c.visibilityDelayByKind[kind]; ok {
+		now := time.Now()
+		created := obj.GetCreationTimestamp().Time
+		if now.Sub(created) < visDelay {
+			c.logger.WithValues(
+				"ObjectKind", kind,
+				"ObjectUID", obj.GetUID(),
+				"TimeSinceCreated", now.Sub(created),
+			).Info("Object not visible yet")
+			return false
+		}
+		return true
+	}
+	return true
+
 }
 
 func (c *Client) Observe(ctx context.Context, obj client.Object) {
