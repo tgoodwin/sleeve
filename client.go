@@ -200,6 +200,11 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	return res
 }
 
+func (c *Client) Observe(ctx context.Context, obj client.Object) {
+	// c.setRootContext(obj)
+	c.logObservation(RecordSingle(obj), GET)
+}
+
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	// TODO log observation for each item in the list
 	// this is hard cause we don't have access to list.Items without knowing the concrete type
