@@ -72,8 +72,9 @@ var _ client.Client = &Client{}
 
 func newClient(wrapped client.Client) *Client {
 	return &Client{
-		Client: wrapped,
-		logger: log,
+		Client:                wrapped,
+		logger:                log,
+		visibilityDelayByKind: make(map[string]time.Duration),
 	}
 }
 
