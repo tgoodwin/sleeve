@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -247,6 +249,28 @@ func (c *Client) Observe(ctx context.Context, obj client.Object) {
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	podList, ok := list.DeepCopyObject().(*corev1.PodList)
+	if ok {
+		err := c.Client.List(ctx, podList, opts...)
+		if err != nil {
+			return err
+		}
+		visiblePods := make([]corev1.Pod, 0)
+		for _, pod := range podList.Items {
+			isVisible := c.isVisible(&pod)
+			if !isVisible {
+				continue
+			}
+			visiblePods = append(visiblePods, pod)
+		}
+		c.logger.WithValues(
+			"ListedPods", len(podList.Items),
+			"VisiblePods", len(visiblePods),
+		).Info("returning visible pods")
+		list.(*corev1.PodList).Items = visiblePods
+		return nil
+	}
+
 	// TODO log observation for each item in the list
 	// this is hard cause we don't have access to list.Items without knowing the concrete type
 	// so we may have to re-implement below the controller-runtime level to be able to do this.
