@@ -87,8 +87,8 @@ func (c *Client) WithName(name string) *Client {
 	return c
 }
 
-func (c *Client) WithDelay(kind schema.GroupKind, duration time.Duration) *Client {
-	c.visibilityDelayByKind[kind.String()] = duration
+func (c *Client) WithDelay(kind string, duration time.Duration) *Client {
+	c.visibilityDelayByKind[kind] = duration
 	return c
 }
 
@@ -223,7 +223,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 }
 
 func (c *Client) isVisible(obj client.Object) bool {
-	kind := obj.GetObjectKind().GroupVersionKind().String()
+	kind := obj.GetObjectKind().GroupVersionKind().Kind
 	if visDelay, ok := c.visibilityDelayByKind[kind]; ok {
 		now := time.Now()
 		created := obj.GetCreationTimestamp().Time
