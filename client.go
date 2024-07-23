@@ -8,13 +8,18 @@ import (
 	"encoding/hex"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	ctrl "sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var log = logf.Log.WithName("sleeveless")
@@ -23,6 +28,7 @@ var log = logf.Log.WithName("sleeveless")
 type OperationType string
 
 var (
+	INIT   OperationType = "INIT"
 	GET    OperationType = "GET"
 	LIST   OperationType = "LIST"
 	CREATE OperationType = "CREATE"
@@ -30,6 +36,8 @@ var (
 	DELETE OperationType = "DELETE"
 	PATCH  OperationType = "PATCH"
 )
+
+var OBSERVATION_KEY = "log-observation"
 
 func createFixedLengthHash() string {
 	// Get the current time
@@ -94,7 +102,11 @@ func (c *Client) WithDelay(kind string, duration time.Duration) *Client {
 	return c
 }
 
-func (c *Client) StartReconcileContext() func() {
+func StartReconcileContext(client client.Client) func() {
+	c, ok := client.(*Client)
+	if !ok {
+		panic("client is not a tracey client")
+	}
 	if c.reconcileID != "" {
 		// unsure if this should never happen or not.
 		// if it does, then we should store reconcileIDs on the client struct as a map
@@ -118,17 +130,33 @@ func (c *Client) StartReconcileContext() func() {
 	}
 }
 
-func (c *Client) logObservation(ov ObjectVersion, op OperationType) {
-	c.logger.WithValues(
+func (c *Client) logObservation(obj client.Object, op OperationType) {
+	ov := RecordSingle(obj)
+	labels := obj.GetLabels()
+	l := c.logger.WithValues(
 		"Timestamp", fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
 		"ReconcileID", c.reconcileID,
 		"CreatorID", c.id,
 		"RootEventID", c.rootID,
-		"OperationType", fmt.Sprintf("%v", op),
-		"ObservedObjectKind", fmt.Sprintf("%+v", ov.Kind),
-		"ObservedObjectUID", fmt.Sprintf("%+v", ov.Uid),
-		"ObservedObjectVersion", fmt.Sprintf("%+v", ov.Version),
-	).Info("log-observation")
+		"OpType", fmt.Sprintf("%v", op),
+		"Kind", fmt.Sprintf("%+v", ov.Kind),
+		"UID", fmt.Sprintf("%+v", ov.Uid),
+		"Version", fmt.Sprintf("%+v", ov.Version),
+	)
+	for k, v := range labels {
+		l = l.WithValues("label:"+k, v)
+	}
+	l.Info(OBSERVATION_KEY)
+}
+
+// InitReconcile... TODO do we need this?
+func (c *Client) InitReconcile(ctx context.Context, req reconcile.Request) {
+	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	var partial metav1.PartialObjectMetadata
+	c.Client.Get(ctx, req.NamespacedName, &partial)
+	if partial.GetUID() != "" {
+		c.logObservation(&partial, INIT)
+	}
 }
 
 func (c *Client) setRootContext(obj client.Object) {
@@ -182,29 +210,29 @@ func (c *Client) propagateLabels(obj client.Object) {
 	out[TRACEY_ROOT_ID] = c.rootID
 	out[TRACEY_RECONCILE_ID] = c.reconcileID
 
-	c.logger.WithValues(
-		"RootID", c.rootID,
-		"ReconcileID", c.reconcileID,
-		"ObjectUID", obj.GetUID(),
-	).Info("Propagating labels")
 	obj.SetLabels(out)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	c.logObservation(obj, CREATE)
 	c.propagateLabels(obj)
 	res := c.Client.Create(ctx, obj, opts...)
-	c.logObservation(RecordSingle(obj), CREATE)
 	return res
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	// its important taht we propagate AFTER logging so we update the labels with the latest reconcileID
+	// after logging the prior reconcileID on the object
+	c.logObservation(obj, DELETE)
 	c.propagateLabels(obj)
 	res := c.Client.Delete(ctx, obj, opts...)
-	c.logObservation(RecordSingle(obj), DELETE)
 	return res
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
 	// cast back to a client.Ojbject
 	objCopy, ok := obj.DeepCopyObject().(client.Object)
 	if !ok {
@@ -220,7 +248,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	}
 	err := c.Client.Get(ctx, key, obj, opts...)
 	c.setRootContext(obj)
-	c.logObservation(RecordSingle(obj), GET)
+	c.logObservation(obj, GET)
 	return err
 }
 
@@ -234,61 +262,138 @@ func (c *Client) isVisible(obj client.Object) bool {
 				"ObjectKind", kind,
 				"ObjectUID", obj.GetUID(),
 				"TimeSinceCreated", now.Sub(created),
-			).Info("Object not visible yet")
+			).V(1).Info("Object not visible yet")
 			return false
 		}
 		return true
 	}
 	return true
-
 }
 
 func (c *Client) Observe(ctx context.Context, obj client.Object) {
+	rid := ctrl.ReconcileIDFromContext(ctx)
+	c.reconcileID = string(rid)
 	// c.setRootContext(obj)
-	c.logObservation(RecordSingle(obj), GET)
+	c.logObservation(obj, GET)
+}
+
+func (c *Client) filterVisible(objs []client.Object) []client.Object {
+	visible := make([]client.Object, 0)
+	for _, obj := range objs {
+		if c.isVisible(obj) {
+			visible = append(visible, obj)
+		}
+	}
+	return visible
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	podList, ok := list.DeepCopyObject().(*corev1.PodList)
-	if ok {
-		err := c.Client.List(ctx, podList, opts...)
-		if err != nil {
+	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+
+	switch l := list.(type) {
+	case *corev1.PodList:
+		lc := list.DeepCopyObject().(*corev1.PodList)
+		if err := c.Client.List(ctx, lc, opts...); err != nil {
 			return err
 		}
-		visiblePods := make([]corev1.Pod, 0)
-		for _, pod := range podList.Items {
-			isVisible := c.isVisible(&pod)
-			if !isVisible {
-				continue
+		out := make([]corev1.Pod, 0)
+		for _, pod := range lc.Items {
+			if c.isVisible(&pod) {
+				c.logObservation(&pod, GET)
+				out = append(out, pod)
 			}
-			visiblePods = append(visiblePods, pod)
 		}
-		c.logger.WithValues(
-			"ListedPods", len(podList.Items),
-			"VisiblePods", len(visiblePods),
-		).Info("returning visible pods")
-		list.(*corev1.PodList).Items = visiblePods
+		l.Items = out
 		return nil
+	case *appsv1.DeploymentList:
+		lc := list.DeepCopyObject().(*appsv1.DeploymentList)
+		if err := c.Client.List(ctx, lc, opts...); err != nil {
+			return err
+		}
+		out := make([]appsv1.Deployment, 0)
+		for _, deployment := range lc.Items {
+			if c.isVisible(&deployment) {
+				c.logObservation(&deployment, GET)
+				out = append(out, deployment)
+			}
+		}
+		l.Items = out
+		return nil
+	default:
+		c.logger.Info("warning: unhandled list type")
+		// TODO dont panic
+		// panic("unhandled list type")
+		return c.Client.List(ctx, list, opts...)
 	}
 
-	// TODO log observation for each item in the list
-	// this is hard cause we don't have access to list.Items without knowing the concrete type
-	// so we may have to re-implement below the controller-runtime level to be able to do this.
-	return c.Client.List(ctx, list, opts...)
+	// // TODO generalize
+	// podList, ok := list.DeepCopyObject().(*corev1.PodList)
+	// if ok {
+	// 	err := c.Client.List(ctx, podList, opts...)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	visiblePods := make([]corev1.Pod, 0)
+	// 	for _, pod := range podList.Items {
+	// 		isVisible := c.isVisible(&pod)
+	// 		if !isVisible {
+	// 			continue
+	// 		}
+	// 		visiblePods = append(visiblePods, pod)
+	// 	}
+	// 	c.logger.WithValues(
+	// 		"ListedPods", len(podList.Items),
+	// 		"VisiblePods", len(visiblePods),
+	// 	).Info("returning visible pods")
+	// 	list.(*corev1.PodList).Items = visiblePods
+	// 	return nil
+	// }
+
+	// // TODO log observation for each item in the list
+	// // this is hard cause we don't have access to list.Items without knowing the concrete type
+	// // so we may have to re-implement below the controller-runtime level to be able to do this.
+	// return c.Client.List(ctx, list, opts...)
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	// need to record the knowledge snapshot this update is based on
+
+	// log observation before propagating labels to capture the label values before the update
+	c.logObservation(obj, UPDATE)
 	c.propagateLabels(obj)
-	c.logObservation(RecordSingle(obj), UPDATE)
 	res := c.Client.Update(ctx, obj, opts...)
 	return res
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	// TODO verify labels propagate correctly under patch
+	c.logObservation(obj, PATCH)
 	c.propagateLabels(obj)
 	res := c.Client.Patch(ctx, obj, patch, opts...)
-	c.logObservation(RecordSingle(obj), PATCH)
 	return res
+}
+
+func extractListItems(list client.ObjectList) []client.Object {
+	items := make([]client.Object, 0)
+	// register each type that can be extracted
+	if podList, ok := list.(*corev1.PodList); ok {
+		for _, pod := range podList.Items {
+			items = append(items, &pod)
+		}
+		return items
+	}
+	if deploymentList, ok := list.(*appsv1.DeploymentList); ok {
+		for _, deployment := range deploymentList.Items {
+			items = append(items, &deployment)
+		}
+		return items
+	}
+	if serviceList, ok := list.(*corev1.ServiceList); ok {
+		for _, service := range serviceList.Items {
+			items = append(items, &service)
+		}
+		return items
+	}
+	// add more types here
+	panic("unhandled list type... please register the type you need to extract")
 }
