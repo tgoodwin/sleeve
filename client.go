@@ -130,6 +130,23 @@ func StartReconcileContext(client client.Client) func() {
 	}
 }
 
+func (c *Client) setReconcileID(ctx context.Context) {
+	rid := string(ctrl.ReconcileIDFromContext(ctx))
+	if rid == "" {
+		// this should never happen given our assumptions
+		panic("reconcileID not set in context")
+	}
+
+	if rid != c.reconcileID {
+		// we are entering a new reconcile invocation
+		// first, clear out stuff
+		c.logger.V(2).Info("reconcileID changed", "old", c.reconcileID, "new", rid)
+		c.rootID = ""
+		// then, update to the new reconcileID.
+		c.reconcileID = string(rid)
+	}
+}
+
 func (c *Client) logObservation(obj client.Object, op OperationType) {
 	ov := RecordSingle(obj)
 	labels := obj.GetLabels()
@@ -151,7 +168,7 @@ func (c *Client) logObservation(obj client.Object, op OperationType) {
 
 // InitReconcile... TODO do we need this?
 func (c *Client) InitReconcile(ctx context.Context, req reconcile.Request) {
-	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	c.setReconcileID(ctx)
 	var partial metav1.PartialObjectMetadata
 	c.Client.Get(ctx, req.NamespacedName, &partial)
 	if partial.GetUID() != "" {
@@ -161,9 +178,16 @@ func (c *Client) InitReconcile(ctx context.Context, req reconcile.Request) {
 
 func (c *Client) setRootContext(obj client.Object) {
 	labels := obj.GetLabels()
+	// set by the webhook
 	rootID, ok := labels[TRACEY_WEBHOOK_LABEL]
 	if !ok {
-		return
+		rootID, ok = labels[TRACEY_ROOT_ID]
+		if !ok {
+			// no root context to set
+			c.logger.V(2).Info("no root context to set")
+			return
+		}
+		c.logger.Info("no webhook label found, using root label", "RootID", rootID)
 	}
 	if c.rootID != "" && c.rootID != rootID {
 		c.logger.WithValues(
@@ -214,7 +238,7 @@ func (c *Client) propagateLabels(obj client.Object) {
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	c.setReconcileID(ctx)
 	c.logObservation(obj, CREATE)
 	c.propagateLabels(obj)
 	res := c.Client.Create(ctx, obj, opts...)
@@ -222,7 +246,7 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	c.setReconcileID(ctx)
 	// its important taht we propagate AFTER logging so we update the labels with the latest reconcileID
 	// after logging the prior reconcileID on the object
 	c.logObservation(obj, DELETE)
@@ -232,7 +256,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	c.setReconcileID(ctx)
 	// cast back to a client.Ojbject
 	objCopy, ok := obj.DeepCopyObject().(client.Object)
 	if !ok {
@@ -271,9 +295,7 @@ func (c *Client) isVisible(obj client.Object) bool {
 }
 
 func (c *Client) Observe(ctx context.Context, obj client.Object) {
-	rid := ctrl.ReconcileIDFromContext(ctx)
-	c.reconcileID = string(rid)
-	// c.setRootContext(obj)
+	c.setReconcileID(ctx)
 	c.logObservation(obj, GET)
 }
 
@@ -288,7 +310,7 @@ func (c *Client) filterVisible(objs []client.Object) []client.Object {
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	c.reconcileID = string(ctrl.ReconcileIDFromContext(ctx))
+	c.setReconcileID(ctx)
 
 	switch l := list.(type) {
 	case *corev1.PodList:
