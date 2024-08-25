@@ -1,4 +1,4 @@
-package client
+package snapshot
 
 import (
 	"time"

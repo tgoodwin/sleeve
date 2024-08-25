@@ -13,6 +13,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/go-logr/logr"
+	"github.com/tgoodwin/sleeve/snapshot"
+	"github.com/tgoodwin/sleeve/tag"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -148,7 +150,7 @@ func (c *Client) setReconcileID(ctx context.Context) {
 }
 
 func (c *Client) logObservation(obj client.Object, op OperationType) {
-	ov := RecordSingle(obj)
+	ov := snapshot.RecordSingle(obj)
 	labels := obj.GetLabels()
 	l := c.logger.WithValues(
 		"Timestamp", fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
@@ -179,9 +181,9 @@ func (c *Client) InitReconcile(ctx context.Context, req reconcile.Request) {
 func (c *Client) setRootContext(obj client.Object) {
 	labels := obj.GetLabels()
 	// set by the webhook
-	rootID, ok := labels[TRACEY_WEBHOOK_LABEL]
+	rootID, ok := labels[tag.TRACEY_WEBHOOK_LABEL]
 	if !ok {
-		rootID, ok = labels[TRACEY_ROOT_ID]
+		rootID, ok = labels[tag.TRACEY_ROOT_ID]
 		if !ok {
 			// no root context to set
 			c.logger.V(2).Info("no root context to set")
@@ -230,9 +232,9 @@ func (c *Client) propagateLabels(obj client.Object) {
 	for k, v := range currLabels {
 		out[k] = v
 	}
-	out[TRACEY_CREATOR_ID] = c.id
-	out[TRACEY_ROOT_ID] = c.rootID
-	out[TRACEY_RECONCILE_ID] = c.reconcileID
+	out[tag.TRACEY_CREATOR_ID] = c.id
+	out[tag.TRACEY_ROOT_ID] = c.rootID
+	out[tag.TRACEY_RECONCILE_ID] = c.reconcileID
 
 	obj.SetLabels(out)
 }

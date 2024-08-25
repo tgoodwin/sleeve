@@ -1,4 +1,4 @@
-package client
+package snapshot
 
 // These are just examples I was working thropugh to understand how the code in this module can be used to reason about a few bugs.
 // TODO actually write unit tests for these functions
