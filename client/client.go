@@ -205,27 +205,6 @@ func (c *Client) setRootContext(obj client.Object) {
 	).Info("Root context set")
 }
 
-// func (c *Client) setLabelContext(obj client.Object) {
-// 	labels := obj.GetLabels()
-// 	rootID, ok := labels[TRACEY_WEBHOOK_LABEL]
-// 	c.lc.SourceObject = string(obj.GetUID())
-// 	if !ok {
-// 		return
-// 	}
-// 	c.lc.RootID = rootID
-// 	if _, ok := labels[TRACEY_PARENT_ID]; !ok {
-// 		c.lc.ParentID = rootID
-// 	}
-// 	if traceID, ok := labels[TRACEY_RECONCILE_ID]; ok {
-// 		c.lc.TraceID = traceID
-// 	}
-// 	c.logger.WithValues(
-// 		"RootID", c.lc.RootID,
-// 		"ParentID", c.lc.ParentID,
-// 		"TraceID", c.lc.TraceID,
-// 	).Info("Label context set")
-// }
-
 func (c *Client) propagateLabels(obj client.Object) {
 	currLabels := obj.GetLabels()
 	out := make(map[string]string)
