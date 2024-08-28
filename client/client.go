@@ -263,6 +263,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	err := c.Client.Get(ctx, key, obj, opts...)
 	c.setRootContext(obj)
 	c.logObservation(obj, GET)
+	c.logObjectVersion(obj)
 	return err
 }
 
