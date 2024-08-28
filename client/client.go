@@ -168,6 +168,15 @@ func (c *Client) logObservation(obj client.Object, op OperationType) {
 	l.Info(OBSERVATION_KEY)
 }
 
+func (c *Client) logObjectVersion(obj client.Object) {
+	l := c.logger.WithValues(
+		"Kind", obj.GetObjectKind().GroupVersionKind().Kind,
+		"Version", obj.GetResourceVersion(),
+		"Contents", fmt.Sprintf(snapshot.Serialize(obj)),
+	)
+	l.Info("log-object-version")
+}
+
 // InitReconcile... TODO do we need this?
 func (c *Client) InitReconcile(ctx context.Context, req reconcile.Request) {
 	c.setReconcileID(ctx)
