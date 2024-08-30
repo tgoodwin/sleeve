@@ -1,5 +1,10 @@
 package tag
 
+import (
+	"github.com/google/uuid"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
 // set by the webhook only
 var TRACEY_WEBHOOK_LABEL = "tracey-uid"
 
@@ -16,6 +21,15 @@ var TRACEY_ROOT_ID = "discrete.events/root-event-id"
 
 // deprecated... to be determined offline
 var TRACEY_PARENT_ID = "discrete.events/parent-id"
+
+var CHANGE_ID = "discrete.events/change-id"
+
+// LabelChange sets a change-id on the object to associate an object's current value with the change event that produced it.
+func LabelChange(obj client.Object) {
+	labels := obj.GetLabels()
+	labels[CHANGE_ID] = uuid.New().String()
+	obj.SetLabels(labels)
+}
 
 type LabelContext struct {
 	RootID       string

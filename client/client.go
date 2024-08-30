@@ -229,6 +229,7 @@ func (c *Client) propagateLabels(obj client.Object) {
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	c.setReconcileID(ctx)
+	tag.LabelChange(obj)
 	c.logObservation(obj, CREATE)
 	c.propagateLabels(obj)
 	res := c.Client.Create(ctx, obj, opts...)
