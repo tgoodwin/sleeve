@@ -27,6 +27,10 @@ var CHANGE_ID = "discrete.events/change-id"
 // LabelChange sets a change-id on the object to associate an object's current value with the change event that produced it.
 func LabelChange(obj client.Object) {
 	labels := obj.GetLabels()
+	// if map is nil, create a new one
+	if labels == nil {
+		labels = make(map[string]string)
+	}
 	labels[CHANGE_ID] = uuid.New().String()
 	obj.SetLabels(labels)
 }
