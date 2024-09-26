@@ -27,6 +27,10 @@ func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts
 	tag.LabelChange(obj)
 	s.logObservation(obj, UPDATE)
 	s.client.propagateLabels(obj)
+	// persist the labels to the object before updating status
+	s.client.Update(ctx, obj)
+
+	// update status
 	return s.writer.Update(ctx, obj, opts...)
 }
 
@@ -34,6 +38,8 @@ func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch
 	s.client.setReconcileID(ctx)
 	tag.LabelChange(obj)
 	s.logObservation(obj, PATCH)
+	// persist the labels to the object before updating status
+	s.client.Update(ctx, obj)
 	return s.writer.Patch(ctx, obj, patch, opts...)
 }
 
@@ -42,5 +48,7 @@ func (s *SubResourceClient) Create(ctx context.Context, obj kclient.Object, sub 
 	tag.LabelChange(obj)
 	s.logObservation(obj, CREATE)
 	s.client.propagateLabels(obj)
+	s.client.Update(ctx, obj)
+
 	return s.writer.Create(ctx, obj, sub, opts...)
 }

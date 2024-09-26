@@ -120,7 +120,8 @@ func StartReconcileContext(client client.Client) func() {
 		"ReconcileID", c.reconcileID,
 		"TimestampNS", fmt.Sprintf("%d", time.Now().UnixNano()),
 	).Info("Reconcile context started")
-	return func() {
+
+	cleanup := func() {
 		c.logger.WithValues(
 			"ReconcileID", c.reconcileID,
 			"TimestampNS", fmt.Sprintf("%d", time.Now().UnixNano()),
@@ -130,6 +131,7 @@ func StartReconcileContext(client client.Client) func() {
 		c.reconcileID = ""
 		c.rootID = ""
 	}
+	return cleanup
 }
 
 func (c *Client) setReconcileID(ctx context.Context) {
@@ -172,7 +174,7 @@ func (c *Client) logObjectVersion(obj client.Object) {
 	l := c.logger.WithValues(
 		"Kind", obj.GetObjectKind().GroupVersionKind().Kind,
 		"Version", obj.GetResourceVersion(),
-		"Contents", fmt.Sprintf(snapshot.Serialize(obj)),
+		"Contents", fmt.Sprint(snapshot.Serialize(obj)),
 	)
 	l.Info("log-object-version")
 }
@@ -240,6 +242,8 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 	c.setReconcileID(ctx)
 	// its important taht we propagate AFTER logging so we update the labels with the latest reconcileID
 	// after logging the prior reconcileID on the object
+
+	// ACTUALLY maybe we dont need this since we should assume that all updates are preceded by a GET that has the prior reconcileID
 	c.logObservation(obj, DELETE)
 	c.propagateLabels(obj)
 	res := c.Client.Delete(ctx, obj, opts...)
