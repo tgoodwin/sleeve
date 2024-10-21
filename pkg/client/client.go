@@ -13,8 +13,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/go-logr/logr"
-	"github.com/tgoodwin/sleeve/snapshot"
-	"github.com/tgoodwin/sleeve/tag"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -78,6 +78,8 @@ type Client struct {
 	logger logr.Logger
 
 	visibilityDelayByKind map[string]time.Duration
+
+	config Options
 }
 
 var _ client.Client = &Client{}
@@ -171,12 +173,14 @@ func (c *Client) logObservation(obj client.Object, op OperationType) {
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
-	l := c.logger.WithValues(
-		"Kind", obj.GetObjectKind().GroupVersionKind().Kind,
-		"Version", obj.GetResourceVersion(),
-		"Contents", fmt.Sprint(snapshot.Serialize(obj)),
-	)
-	l.Info("log-object-version")
+	if c.config.LogObjects {
+		l := c.logger.WithValues(
+			"Kind", obj.GetObjectKind().GroupVersionKind().Kind,
+			"Version", obj.GetResourceVersion(),
+			"Contents", fmt.Sprint(snapshot.Serialize(obj)),
+		)
+		l.Info("log-object-version")
+	}
 }
 
 // InitReconcile... TODO do we need this?
@@ -389,6 +393,33 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 	c.propagateLabels(obj)
 	res := c.Client.Patch(ctx, obj, patch, opts...)
 	return res
+}
+
+func (c *Client) LabelChange(obj client.Object) error {
+	// labels := tag.GetChangeLabel()
+	// patch := map[string]interface{}{
+	// 	"metadata": map[string]interface{}{
+	// 		"labels": labels,
+	// 	},
+	// }
+	// patchBytes, err := json.Marshal(patch)
+	// if err != nil {
+	// 	panic("failed to marshal patch")
+	// }
+	objCopy := obj.DeepCopyObject().(client.Object)
+	labels := objCopy.GetLabels()
+	// if map is nil, create a new one
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels[tag.CHANGE_ID] = tag.GetChangeLabel()[tag.CHANGE_ID]
+	objCopy.SetLabels(labels)
+	patch := client.MergeFrom(obj)
+	if err := c.Patch(context.TODO(), objCopy, patch); err != nil {
+		c.logger.Error(err, "failed to patch object")
+		return err
+	}
+	return nil
 }
 
 func extractListItems(list client.ObjectList) []client.Object {

@@ -35,6 +35,12 @@ func LabelChange(obj client.Object) {
 	obj.SetLabels(labels)
 }
 
+func GetChangeLabel() map[string]string {
+	labels := make(map[string]string)
+	labels[CHANGE_ID] = uuid.New().String()
+	return labels
+}
+
 type LabelContext struct {
 	RootID       string
 	TraceID      string

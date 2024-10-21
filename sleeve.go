@@ -1,7 +1,7 @@
 package sleeve
 
 import (
-	"github.com/tgoodwin/sleeve/client"
+	"github.com/tgoodwin/sleeve/pkg/client"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
