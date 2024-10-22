@@ -6,6 +6,7 @@ import (
 
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -13,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/go-logr/logr"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -154,22 +156,23 @@ func (c *Client) setReconcileID(ctx context.Context) {
 }
 
 func (c *Client) logObservation(obj client.Object, op OperationType) {
-	ov := snapshot.RecordSingle(obj)
-	labels := obj.GetLabels()
-	l := c.logger.WithValues(
-		"Timestamp", fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
-		"ReconcileID", c.reconcileID,
-		"CreatorID", c.id,
-		"RootEventID", c.rootID,
-		"OpType", fmt.Sprintf("%v", op),
-		"Kind", fmt.Sprintf("%+v", ov.Kind),
-		"UID", fmt.Sprintf("%+v", ov.Uid),
-		"Version", fmt.Sprintf("%+v", ov.Version),
-	)
-	for k, v := range labels {
-		l = l.WithValues("label:"+k, v)
+	event := &event.Event{
+		Timestamp:    fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
+		ReconcileID:  c.reconcileID,
+		ControllerID: c.id,
+		RootEventID:  c.rootID,
+		OpType:       string(op),
+		Kind:         obj.GetObjectKind().GroupVersionKind().Kind,
+		ObjectID:     string(obj.GetUID()),
+		Version:      obj.GetResourceVersion(),
+		Labels:       obj.GetLabels(),
 	}
-	l.Info(OBSERVATION_KEY)
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		c.logger.Error(err, "failed to serialize event")
+		return
+	}
+	c.logger.WithValues("LogType", OBSERVATION_KEY).Info(string(eventJSON))
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
