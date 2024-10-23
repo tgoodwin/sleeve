@@ -3,15 +3,12 @@ package client
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"time"
-
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/sleeve/pkg/event"
@@ -23,7 +20,6 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	ctrl "sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var log = logf.Log.WithName("sleeveless")
@@ -41,7 +37,8 @@ var (
 	PATCH  OperationType = "PATCH"
 )
 
-var OBSERVATION_KEY = "log-observation"
+var OPERATION_KEY = "sleeve:controller-operation"
+var OBJECT_VERSION_KEY = "sleeve:object-version"
 
 func createFixedLengthHash() string {
 	// Get the current time
@@ -79,18 +76,16 @@ type Client struct {
 
 	logger logr.Logger
 
-	visibilityDelayByKind map[string]time.Duration
-
-	config Options
+	config *Config
 }
 
 var _ client.Client = &Client{}
 
 func newClient(wrapped client.Client) *Client {
 	return &Client{
-		Client:                wrapped,
-		logger:                log,
-		visibilityDelayByKind: make(map[string]time.Duration),
+		Client: wrapped,
+		logger: log,
+		config: NewConfig(),
 	}
 }
 
@@ -100,11 +95,6 @@ func Wrap(c client.Client) *Client {
 
 func (c *Client) WithName(name string) *Client {
 	c.id = name
-	return c
-}
-
-func (c *Client) WithDelay(kind string, duration time.Duration) *Client {
-	c.visibilityDelayByKind[kind] = duration
 	return c
 }
 
@@ -155,7 +145,7 @@ func (c *Client) setReconcileID(ctx context.Context) {
 	}
 }
 
-func (c *Client) logObservation(obj client.Object, op OperationType) {
+func (c *Client) logOperation(obj client.Object, op OperationType) {
 	event := &event.Event{
 		Timestamp:    fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
 		ReconcileID:  c.reconcileID,
@@ -169,30 +159,15 @@ func (c *Client) logObservation(obj client.Object, op OperationType) {
 	}
 	eventJSON, err := json.Marshal(event)
 	if err != nil {
-		c.logger.Error(err, "failed to serialize event")
-		return
+		panic("failed to marshal event")
 	}
-	c.logger.WithValues("LogType", OBSERVATION_KEY).Info(string(eventJSON))
+	c.logger.WithValues("LogType", OPERATION_KEY).Info(string(eventJSON))
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
-	if c.config.LogObjects {
-		l := c.logger.WithValues(
-			"Kind", obj.GetObjectKind().GroupVersionKind().Kind,
-			"Version", obj.GetResourceVersion(),
-			"Contents", fmt.Sprint(snapshot.Serialize(obj)),
-		)
-		l.Info("log-object-version")
-	}
-}
-
-// InitReconcile... TODO do we need this?
-func (c *Client) InitReconcile(ctx context.Context, req reconcile.Request) {
-	c.setReconcileID(ctx)
-	var partial metav1.PartialObjectMetadata
-	c.Client.Get(ctx, req.NamespacedName, &partial)
-	if partial.GetUID() != "" {
-		c.logObservation(&partial, INIT)
+	if c.config.LogObjectSnapshots || true {
+		r := snapshot.RecordValue(obj)
+		c.logger.WithValues("LogType", "object-version").Info(r)
 	}
 }
 
@@ -239,7 +214,7 @@ func (c *Client) propagateLabels(obj client.Object) {
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	c.setReconcileID(ctx)
 	tag.LabelChange(obj)
-	c.logObservation(obj, CREATE)
+	c.logOperation(obj, CREATE)
 	c.propagateLabels(obj)
 	res := c.Client.Create(ctx, obj, opts...)
 	return res
@@ -251,7 +226,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 	// after logging the prior reconcileID on the object
 
 	// ACTUALLY maybe we dont need this since we should assume that all updates are preceded by a GET that has the prior reconcileID
-	c.logObservation(obj, DELETE)
+	c.logOperation(obj, DELETE)
 	c.propagateLabels(obj)
 	res := c.Client.Delete(ctx, obj, opts...)
 	return res
@@ -274,14 +249,14 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	}
 	err := c.Client.Get(ctx, key, obj, opts...)
 	c.setRootContext(obj)
-	c.logObservation(obj, GET)
+	c.logOperation(obj, GET)
 	c.logObjectVersion(obj)
 	return err
 }
 
 func (c *Client) isVisible(obj client.Object) bool {
 	kind := obj.GetObjectKind().GroupVersionKind().Kind
-	if visDelay, ok := c.visibilityDelayByKind[kind]; ok {
+	if visDelay, ok := c.config.visibilityDelayByKind[kind]; ok {
 		now := time.Now()
 		created := obj.GetCreationTimestamp().Time
 		if now.Sub(created) < visDelay {
@@ -299,7 +274,7 @@ func (c *Client) isVisible(obj client.Object) bool {
 
 func (c *Client) Observe(ctx context.Context, obj client.Object) {
 	c.setReconcileID(ctx)
-	c.logObservation(obj, GET)
+	c.logOperation(obj, GET)
 }
 
 func (c *Client) filterVisible(objs []client.Object) []client.Object {
@@ -315,76 +290,37 @@ func (c *Client) filterVisible(objs []client.Object) []client.Object {
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	c.setReconcileID(ctx)
 
-	switch l := list.(type) {
-	case *corev1.PodList:
-		lc := list.DeepCopyObject().(*corev1.PodList)
-		if err := c.Client.List(ctx, lc, opts...); err != nil {
-			return err
-		}
-		out := make([]corev1.Pod, 0)
-		for _, pod := range lc.Items {
-			if c.isVisible(&pod) {
-				c.logObservation(&pod, GET)
-				out = append(out, pod)
-			}
-		}
-		l.Items = out
-		return nil
-	case *appsv1.DeploymentList:
-		lc := list.DeepCopyObject().(*appsv1.DeploymentList)
-		if err := c.Client.List(ctx, lc, opts...); err != nil {
-			return err
-		}
-		out := make([]appsv1.Deployment, 0)
-		for _, deployment := range lc.Items {
-			if c.isVisible(&deployment) {
-				c.logObservation(&deployment, GET)
-				out = append(out, deployment)
-			}
-		}
-		l.Items = out
-		return nil
-	default:
-		c.logger.Info("warning: unhandled list type")
-		// TODO dont panic
-		// panic("unhandled list type")
-		return c.Client.List(ctx, list, opts...)
+	// Perform the List operation on the wrapped client
+	lc := list.DeepCopyObject().(client.ObjectList)
+	if err := c.Client.List(ctx, lc, opts...); err != nil {
+		return err
 	}
 
-	// // TODO generalize
-	// podList, ok := list.DeepCopyObject().(*corev1.PodList)
-	// if ok {
-	// 	err := c.Client.List(ctx, podList, opts...)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	visiblePods := make([]corev1.Pod, 0)
-	// 	for _, pod := range podList.Items {
-	// 		isVisible := c.isVisible(&pod)
-	// 		if !isVisible {
-	// 			continue
-	// 		}
-	// 		visiblePods = append(visiblePods, pod)
-	// 	}
-	// 	c.logger.WithValues(
-	// 		"ListedPods", len(podList.Items),
-	// 		"VisiblePods", len(visiblePods),
-	// 	).Info("returning visible pods")
-	// 	list.(*corev1.PodList).Items = visiblePods
-	// 	return nil
-	// }
+	// use reflection to get the Items field from the result
+	itemsValue := reflect.ValueOf(lc).Elem().FieldByName("Items")
+	if !itemsValue.IsValid() {
+		return fmt.Errorf("unable to get Items field from list")
+	}
 
-	// // TODO log observation for each item in the list
-	// // this is hard cause we don't have access to list.Items without knowing the concrete type
-	// // so we may have to re-implement below the controller-runtime level to be able to do this.
-	// return c.Client.List(ctx, list, opts...)
+	// create a new slice to hold the items
+	out := reflect.MakeSlice(itemsValue.Type(), 0, itemsValue.Len())
+	for i := 0; i < itemsValue.Len(); i++ {
+		item := itemsValue.Index(i).Addr().Interface().(client.Object)
+		c.logOperation(item, LIST)
+		out = reflect.Append(out, itemsValue.Index(i))
+	}
+
+	// Set the items back to the list
+	itemsValue.Set(out)
+
+	return nil
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	// need to record the knowledge snapshot this update is based on
 
 	// log observation before propagating labels to capture the label values before the update
-	c.logObservation(obj, UPDATE)
+	c.logOperation(obj, UPDATE)
 	c.propagateLabels(obj)
 	res := c.Client.Update(ctx, obj, opts...)
 	return res
@@ -392,7 +328,7 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	// TODO verify labels propagate correctly under patch
-	c.logObservation(obj, PATCH)
+	c.logOperation(obj, PATCH)
 	c.propagateLabels(obj)
 	res := c.Client.Patch(ctx, obj, patch, opts...)
 	return res
@@ -423,29 +359,4 @@ func (c *Client) LabelChange(obj client.Object) error {
 		return err
 	}
 	return nil
-}
-
-func extractListItems(list client.ObjectList) []client.Object {
-	items := make([]client.Object, 0)
-	// register each type that can be extracted
-	if podList, ok := list.(*corev1.PodList); ok {
-		for _, pod := range podList.Items {
-			items = append(items, &pod)
-		}
-		return items
-	}
-	if deploymentList, ok := list.(*appsv1.DeploymentList); ok {
-		for _, deployment := range deploymentList.Items {
-			items = append(items, &deployment)
-		}
-		return items
-	}
-	if serviceList, ok := list.(*corev1.ServiceList); ok {
-		for _, service := range serviceList.Items {
-			items = append(items, &service)
-		}
-		return items
-	}
-	// add more types here
-	panic("unhandled list type... please register the type you need to extract")
 }
