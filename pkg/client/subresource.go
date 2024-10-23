@@ -12,6 +12,8 @@ import (
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+var _ client.StatusClient = &Client{}
+
 type SubResourceClient struct {
 	// reader kclient.SubResourceReader
 	client *Client
@@ -23,19 +25,15 @@ func (c *Client) Status() kclient.SubResourceWriter {
 	return &SubResourceClient{writer: statusClient, client: c}
 }
 
-func (s *SubResourceClient) logObservation(obj kclient.Object, action OperationType) {
-	s.client.logObservation(obj, action)
+func (s *SubResourceClient) logOperation(obj kclient.Object, action OperationType) {
+	s.client.logOperation(obj, action)
 }
 
 func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts ...kclient.SubResourceUpdateOption) error {
 	s.client.setReconcileID(ctx)
 	tag.LabelChange(obj)
-	s.logObservation(obj, UPDATE)
+	s.logOperation(obj, UPDATE)
 	s.client.propagateLabels(obj)
-	// // conditions, err := getUnstructuredStatusConditions(obj)
-	// // if err != nil {
-	// // 	panic(fmt.Errorf("failed to extract status conditions: %v", err))
-	// // }
 	// fmt.Printf("extracted conditions: %v", conditions)
 	// persist the labels to the object before updating status
 
@@ -49,7 +47,7 @@ func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts
 func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch kclient.Patch, opts ...kclient.SubResourcePatchOption) error {
 	s.client.setReconcileID(ctx)
 	tag.LabelChange(obj)
-	s.logObservation(obj, PATCH)
+	s.logOperation(obj, PATCH)
 	// persist the labels to the object before updating status
 	s.client.Update(ctx, obj)
 	return s.writer.Patch(ctx, obj, patch, opts...)
@@ -58,7 +56,7 @@ func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch
 func (s *SubResourceClient) Create(ctx context.Context, obj kclient.Object, sub kclient.Object, opts ...kclient.SubResourceCreateOption) error {
 	s.client.setReconcileID(ctx)
 	tag.LabelChange(obj)
-	s.logObservation(obj, CREATE)
+	s.logOperation(obj, CREATE)
 	s.client.propagateLabels(obj)
 	s.client.Update(ctx, obj)
 

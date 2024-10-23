@@ -79,7 +79,7 @@ type Client struct {
 	config *Config
 }
 
-var _ client.Client = &Client{}
+var _ client.Client = (*Client)(nil)
 
 func newClient(wrapped client.Client) *Client {
 	return &Client{
@@ -230,6 +230,17 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 	c.propagateLabels(obj)
 	res := c.Client.Delete(ctx, obj, opts...)
 	return res
+}
+
+func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+	c.setReconcileID(ctx)
+	// TODO do we really need to propagate labels after logging the deletion?
+	// - tgoodwin 10-23-2024
+	c.logOperation(obj, DELETE)
+	c.propagateLabels(obj)
+	res := c.Client.DeleteAllOf(ctx, obj, opts...)
+	return res
+
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
