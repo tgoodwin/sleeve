@@ -2,10 +2,7 @@ package snapshot
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
-
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // fields to mask over:
@@ -26,7 +23,7 @@ var toMask = map[string]struct{}{
 	"DeletionTimestamp": {},
 }
 
-func serialize(obj interface{}) map[string]string {
+func serialize(obj interface{}) map[string]interface{} {
 	data, err := json.Marshal(obj)
 	if err != nil {
 		log.Fatalf("Error marshaling struct to JSON: %v", err)
@@ -36,16 +33,11 @@ func serialize(obj interface{}) map[string]string {
 	if err := json.Unmarshal(data, &resultMap); err != nil {
 		log.Fatalf("Error unmarshaling JSON to map: %v", err)
 	}
-
-	stringMap := make(map[string]string)
-	for k, v := range resultMap {
-		stringMap[k] = fmt.Sprintf("%v", v)
-	}
-	return stringMap
+	return resultMap
 }
 
-func maskFields(in map[string]string) map[string]string {
-	masked := make(map[string]string)
+func maskFields(in map[string]string) map[string]interface{} {
+	masked := make(map[string]interface{})
 	for k := range in {
 		if _, ok := toMask[k]; ok {
 			continue
@@ -55,13 +47,11 @@ func maskFields(in map[string]string) map[string]string {
 	return masked
 }
 
+// check out https://github.com/cisco-open/k8s-objectmatcher
+
 // TODO this needs to handle nested objects
-func Serialize(obj client.Object) string {
+func Serialize(obj interface{}) string {
 	serialized := serialize(obj)
-	masked := maskFields(serialized)
-	asJSON, err := json.Marshal(masked)
-	if err != nil {
-		log.Fatalf("Error marshaling masked object to JSON: %v", err)
-	}
+	asJSON, _ := json.Marshal(serialized)
 	return string(asJSON)
 }
