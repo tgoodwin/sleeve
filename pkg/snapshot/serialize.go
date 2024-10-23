@@ -3,15 +3,15 @@ package snapshot
 import (
 	"encoding/json"
 	"log"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// fields to mask over:
-// - UID
-// - CreationTimestamp
-
-type Value struct {
-	Version string `json:"version"`
-	Data    string `json:"data"`
+type Record struct {
+	ObjectID string `json:"object_id"`
+	Kind     string `json:"kind"`
+	Version  string `json:"version"`
+	Value    string `json:"value"`
 }
 
 var toMask = map[string]struct{}{
@@ -53,5 +53,16 @@ func maskFields(in map[string]string) map[string]interface{} {
 func Serialize(obj interface{}) string {
 	serialized := serialize(obj)
 	asJSON, _ := json.Marshal(serialized)
+	return string(asJSON)
+}
+
+func RecordValue(obj client.Object) string {
+	r := Record{
+		ObjectID: string(obj.GetUID()),
+		Kind:     obj.GetObjectKind().GroupVersionKind().String(),
+		Version:  obj.GetResourceVersion(),
+		Value:    Serialize(obj),
+	}
+	asJSON, _ := json.Marshal(r)
 	return string(asJSON)
 }
