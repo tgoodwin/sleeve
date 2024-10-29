@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -165,7 +166,7 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
-	if c.config.LogObjectSnapshots || true {
+	if c.config.LogObjectSnapshots {
 		r := snapshot.RecordValue(obj)
 		c.logger.WithValues("LogType", "object-version").Info(r)
 	}
@@ -179,10 +180,9 @@ func (c *Client) setRootContext(obj client.Object) {
 		rootID, ok = labels[tag.TRACEY_ROOT_ID]
 		if !ok {
 			// no root context to set
-			c.logger.V(2).Info("no root context to set")
+			c.logger.V(2).Error(errors.New("no root context to set"))
 			return
 		}
-		c.logger.Info("no webhook label found, using root label", "RootID", rootID)
 	}
 	if c.rootID != "" && c.rootID != rootID {
 		c.logger.WithValues(
@@ -191,7 +191,7 @@ func (c *Client) setRootContext(obj client.Object) {
 		).Error(nil, "Root context changed")
 	}
 	c.rootID = rootID
-	c.logger.WithValues(
+	c.logger.V(4).WithValues(
 		"RootID", c.rootID,
 		"ObjectKind", obj.GetObjectKind().GroupVersionKind().String(),
 		"ObjectUID", obj.GetUID(),
@@ -300,7 +300,6 @@ func (c *Client) filterVisible(objs []client.Object) []client.Object {
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	c.setReconcileID(ctx)
-
 	// Perform the List operation on the wrapped client
 	lc := list.DeepCopyObject().(client.ObjectList)
 	if err := c.Client.List(ctx, lc, opts...); err != nil {
@@ -321,8 +320,12 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
 
-	// Set the items back to the list
-	itemsValue.Set(out)
+	// Set the items back to the original list
+	originalItemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
+	if !originalItemsValue.IsValid() {
+		return fmt.Errorf("unable to get Items field from original list")
+	}
+	originalItemsValue.Set(out)
 
 	return nil
 }
