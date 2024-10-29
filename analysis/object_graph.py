@@ -3,21 +3,32 @@ from dataclasses import dataclass
 from collections import defaultdict
 from graphviz import Digraph
 from colors import assign_colors_to_ids
+from log2json import strip_logtype_from_lines
+from versionmapper import process as version_process
 
 READ_OPERATIONS = {"GET", "LIST"}
 WRITE_OPERATIONS = {"CREATE", "PATCH", "UPDATE", "DELETE"}
 
 def shorter(id):
-    return id.split("-")[0]
+    try:
+        return id.split("-")[0]
+    except:
+        return id
 
-def graph(data):
+def graph(data, versionmap):
     colors = assign_colors_to_ids(data.keys())
     dot = Digraph(comment='Event Graph2')
 
     # Add nodes and edges
     for reconcile_id, rw in data.items():
         for read_event in rw["readset"]:
-            dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}')
+            version = versionmap.get(read_event.id())
+            if version:
+                annotations = version.status_conditions()
+                dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}{annotations}')
+            else:
+                print(f"Missing version for read event: {read_event.id()}")
+                dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}')
         for write_event in rw["writeset"]:
             dot.node(write_event.id(), f'{write_event.kind}:{shorter(write_event.object_id)}@{shorter(write_event.causal_id)}')
             for read_event in rw["readset"]:
@@ -63,7 +74,8 @@ class Event:
         # causal_id is change-id unless change-id is unset, then it is root-event-id
         causal_id = labels.get("change-id") or obj.get("label:tracey-uid", None)
         if not causal_id:
-            raise ValueError(f"Missing change-id and root-event-id labels: {obj}")
+            print("oops missing causal id")
+            # raise ValueError(f"Missing change-id and root-event-id labels: {obj}")
 
         # causal_id = obj.get("kind") + "/" + causal_id
 
@@ -124,8 +136,7 @@ def backfill_labels(events):
     return events
 
 
-
-def process(lines):
+def analyze(lines, versions):
     by_reconcile_id = defaultdict(list)
     events = []
     for line in lines:
@@ -164,7 +175,7 @@ def process(lines):
         for event in rw["writeset"]:
             print(f"\t{event}")
 
-    graph(reads_to_writes)
+    graph(reads_to_writes, versions)
     # Generate event graph using graphviz
 
 
@@ -189,6 +200,24 @@ def readsets_to_writesets(events_by_reconcile_id):
         out[reconcile_id] = {"readset": readset, "writeset": writeset}
 
     return out
+
+
+def process(lines):
+    # first, separate out controller observations
+    # log lines from our instrumentation
+    content = [line for line in lines if "sleeveless" in line]
+    content = [line.split("sleeveless")[1].strip() for line in content]
+
+    # split into conroller-operation and object-version
+    controller_ops = [line for line in content if "sleeve:controller-operation" in line]
+    object_versions = [line for line in content if "sleeve:object-version" in line]
+
+    controller_ops = strip_logtype_from_lines(controller_ops)
+    object_versions = strip_logtype_from_lines(object_versions)
+    versions = version_process(object_versions)
+
+    analyze(controller_ops, versions)
+
 
 
 def main():
