@@ -1,13 +1,32 @@
 import json
 from dataclasses import dataclass
 from collections import defaultdict
+from graphviz import Digraph
+from colors import assign_colors_to_ids
 
 READ_OPERATIONS = {"GET", "LIST"}
 WRITE_OPERATIONS = {"CREATE", "PATCH", "UPDATE", "DELETE"}
 
+def shorter(id):
+    return id.split("-")[0]
+
+def graph(data):
+    colors = assign_colors_to_ids(data.keys())
+    dot = Digraph(comment='Event Graph2')
+    for reconcile_id, rw in data.items():
+        for read_event in rw["readset"]:
+            dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}')
+        for write_event in rw["writeset"]:
+            dot.node(write_event.id(), f'{write_event.kind}:{shorter(write_event.object_id)}@{shorter(write_event.causal_id)}')
+            for read_event in rw["readset"]:
+                dot.edge(read_event.id(), write_event.id(), label=shorter(reconcile_id), color=colors[reconcile_id])
+
+    dot.render('event_graph2', format='png', view=True)
+
 
 @dataclass
 class Event:
+    causal_id: str
     timestamp: str
     reconcile_id: str
     controller_id: str
@@ -27,7 +46,16 @@ class Event:
             for k, v in obj.items()
             if k.startswith("label:discrete.events/")
         }
+
+        # causal_id is change-id unless change-id is unset, then it is root-event-id
+        causal_id = labels.get("change-id") or obj.get("label:tracey-uid", None)
+        if not causal_id:
+            raise ValueError(f"Missing change-id and root-event-id labels: {obj}")
+
+        # causal_id = obj.get("kind") + "/" + causal_id
+
         return Event(
+            causal_id=causal_id,
             timestamp=obj.get("timestamp"),
             reconcile_id=obj.get("reconcile_id"),
             controller_id=obj.get("controller_id"),
@@ -39,12 +67,15 @@ class Event:
             labels=labels,
         )
 
+    def id(self):
+        return f'{self.kind}/{self.causal_id}'
+
     def label(self, key):
         return self.labels.get(key)
 
     def __repr__(self) -> str:
         obj_id_short = self.object_id.split("-")[0]
-        return f"Object({self.kind}, id={obj_id_short}, version={self.version} change-id={self.label('change-id')}, op={self.op_type})"
+        return f"Object({self.kind}, id={obj_id_short}, version={self.version} causal-id={self.causal_id}, op={self.op_type})"
 
 
 def backfill_labels(events):
@@ -58,15 +89,20 @@ def backfill_labels(events):
     by_change_id = {}
     for event in read_events:
         change_id = event.label("change-id")
-        if change_id:
-            by_change_id[change_id] = event
+        if not change_id:
+            event.change_id = event.label("root-event-id")
+        by_change_id[change_id] = event
 
-    create_events = [e for e in events if e.op_type == "CREATE"]
+    create_events = [e for e in events if e.op_type in WRITE_OPERATIONS]
     for create_event in create_events:
         change_id = create_event.label("change-id")
         if change_id not in by_change_id:
+            print(f"Missing read event for CREATE event: {create_event}")
+            # there could be a create event that gets clobbered by an update event
+            # which is kind of weird, but it technically could happen
             continue
             # raise RuntimeError(f"Missing read event for CREATE event: {create_event}")
+
         read_event = by_change_id[change_id]
         create_event.kind = read_event.kind
         create_event.object_id = read_event.object_id
@@ -82,7 +118,8 @@ def process(lines):
     for line in lines:
         # validate the line is a JSON object
         if not line.startswith("{"):
-            raise ValueError(f"Invalid JSON object: {line}")
+            continue
+            # raise ValueError(f"Invalid JSON object: {line}")
 
         # parse the JSON object
         event = Event.from_json(line)
@@ -105,6 +142,7 @@ def process(lines):
         if len(rw["writeset"]) == 0:
             continue
 
+        print("---")
         print(f"Reconcile ID: {reconcile_id}, Controller: {rw['writeset'][0].controller_id}")
         print("Readset:")
         for event in rw["readset"]:
@@ -112,6 +150,21 @@ def process(lines):
         print("Writeset:")
         for event in rw["writeset"]:
             print(f"\t{event}")
+
+    graph(reads_to_writes)
+    # Generate event graph using graphviz
+
+
+    dot = Digraph(comment='Event Graph')
+    for reconcile_id, rw in reads_to_writes.items():
+        for read_event in rw["readset"]:
+            dot.node(read_event.object_id, f'{read_event.kind} ({read_event.object_id})')
+        for write_event in rw["writeset"]:
+            dot.node(write_event.object_id, f'{write_event.kind} ({write_event.object_id})')
+            for read_event in rw["readset"]:
+                dot.edge(read_event.object_id, write_event.object_id)
+
+    dot.render('event_graph', format='png')
 
 
 def readsets_to_writesets(events_by_reconcile_id):
