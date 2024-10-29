@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 
@@ -180,7 +179,7 @@ func (c *Client) setRootContext(obj client.Object) {
 		rootID, ok = labels[tag.TRACEY_ROOT_ID]
 		if !ok {
 			// no root context to set
-			c.logger.V(2).Error(errors.New("no root context to set"))
+			c.logger.V(2).Error(nil, "Root context not set")
 			return
 		}
 	}
@@ -188,10 +187,10 @@ func (c *Client) setRootContext(obj client.Object) {
 		c.logger.WithValues(
 			"RootID", c.rootID,
 			"NewRootID", rootID,
-		).Error(nil, "Root context changed")
+		).V(2).Error(nil, "Root context changed")
 	}
 	c.rootID = rootID
-	c.logger.V(4).WithValues(
+	c.logger.V(2).WithValues(
 		"RootID", c.rootID,
 		"ObjectKind", obj.GetObjectKind().GroupVersionKind().String(),
 		"ObjectUID", obj.GetUID(),
