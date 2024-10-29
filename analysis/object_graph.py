@@ -13,6 +13,8 @@ def shorter(id):
 def graph(data):
     colors = assign_colors_to_ids(data.keys())
     dot = Digraph(comment='Event Graph2')
+
+    # Add nodes and edges
     for reconcile_id, rw in data.items():
         for read_event in rw["readset"]:
             dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}')
@@ -20,6 +22,17 @@ def graph(data):
             dot.node(write_event.id(), f'{write_event.kind}:{shorter(write_event.object_id)}@{shorter(write_event.causal_id)}')
             for read_event in rw["readset"]:
                 dot.edge(read_event.id(), write_event.id(), label=shorter(reconcile_id), color=colors[reconcile_id])
+
+    # Add legend as a table
+    legend_table = '<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">'
+    legend_table += '<TR><TD><B>Controller Reconciles</B></TD><TD><B>Color</B></TD></TR>'
+    for reconcile_id, color in colors.items():
+        if len(data[reconcile_id]["writeset"]) > 0:
+            controller_id = data[reconcile_id]["writeset"][0].controller_id
+            legend_table += f'<TR><TD>{controller_id}-{shorter(reconcile_id)}</TD><TD BGCOLOR="{color}"></TD></TR>'
+    legend_table += '</TABLE>>'
+
+    dot.node('legend', legend_table, shape='plaintext')
 
     dot.render('event_graph2', format='png', view=True)
 
