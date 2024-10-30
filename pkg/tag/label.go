@@ -9,7 +9,7 @@ import (
 var TRACEY_WEBHOOK_LABEL = "tracey-uid"
 
 // the ID of the reconcile invocation in which the object was acted upon
-var TRACEY_RECONCILE_ID = "discrete.events/reconcile-id"
+var TRACEY_RECONCILE_ID = "discrete.events/prev-write-reconcile-id"
 
 // the ID of the controller that acted upon the object
 var TRACEY_CREATOR_ID = "discrete.events/creator-id"

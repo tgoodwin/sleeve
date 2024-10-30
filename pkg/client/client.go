@@ -3,7 +3,9 @@ package client
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
+	"strings"
 
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,6 +38,13 @@ var (
 	DELETE OperationType = "DELETE"
 	PATCH  OperationType = "PATCH"
 )
+
+var mutationTypes = map[OperationType]struct{}{
+	CREATE: {},
+	UPDATE: {},
+	DELETE: {},
+	PATCH:  {},
+}
 
 var OPERATION_KEY = "sleeve:controller-operation"
 var OBJECT_VERSION_KEY = "sleeve:object-version"
@@ -98,34 +107,27 @@ func (c *Client) WithName(name string) *Client {
 	return c
 }
 
-func StartReconcileContext(client client.Client) func() {
-	c, ok := client.(*Client)
-	if !ok {
-		panic("client is not a tracey client")
-	}
-	if c.reconcileID != "" {
-		// unsure if this should never happen or not.
-		// if it does, then we should store reconcileIDs on the client struct as a map
-		panic("concurrent reconcile invocations detected")
-	}
-	// set a reconcileID for this invocation
-	c.reconcileID = createFixedLengthHash()
-	c.logger.WithValues(
-		"ReconcileID", c.reconcileID,
-		"TimestampNS", fmt.Sprintf("%d", time.Now().UnixNano()),
-	).Info("Reconcile context started")
+func (c *Client) WithEnvConfig() *Client {
+	c.logger = log
 
-	cleanup := func() {
-		c.logger.WithValues(
-			"ReconcileID", c.reconcileID,
-			"TimestampNS", fmt.Sprintf("%d", time.Now().UnixNano()),
-		).Info("Reconcile context ended")
-
-		// reset temporary state
-		c.reconcileID = ""
-		c.rootID = ""
+	// Get the current environment variables
+	envVars := make(map[string]string)
+	for _, env := range os.Environ() {
+		pair := strings.SplitN(env, "=", 2)
+		if len(pair) == 2 {
+			envVars[pair[0]] = pair[1]
+		}
 	}
-	return cleanup
+	if logSnapshots, ok := envVars["SLEEVE_LOG_SNAPSHOTS"]; ok {
+		c.config.LogObjectSnapshots = logSnapshots == "1"
+	}
+
+	// Log the environment variables
+	for key, value := range envVars {
+		c.logger.WithValues("key", key, "value", value).Info("configuring sleeve client from env")
+	}
+
+	return c
 }
 
 func (c *Client) setReconcileID(ctx context.Context) {
@@ -167,7 +169,7 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 func (c *Client) logObjectVersion(obj client.Object) {
 	if c.config.LogObjectSnapshots {
 		r := snapshot.RecordValue(obj)
-		c.logger.WithValues("LogType", "object-version").Info(r)
+		c.logger.WithValues("LogType", OBJECT_VERSION_KEY).Info(r)
 	}
 }
 
@@ -210,40 +212,32 @@ func (c *Client) propagateLabels(obj client.Object) {
 	obj.SetLabels(out)
 }
 
-func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+func (c *Client) trackOperation(ctx context.Context, obj client.Object, op OperationType) {
 	c.setReconcileID(ctx)
-	tag.LabelChange(obj)
-	c.logOperation(obj, CREATE)
+	if _, ok := mutationTypes[op]; ok {
+		tag.LabelChange(obj)
+	}
+	c.logOperation(obj, op)
+	// propagate labels after logging so we capture the label values before the operation
 	c.propagateLabels(obj)
-	res := c.Client.Create(ctx, obj, opts...)
-	return res
+}
+
+func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	c.trackOperation(ctx, obj, CREATE)
+	return c.Client.Create(ctx, obj, opts...)
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	c.setReconcileID(ctx)
-	// its important taht we propagate AFTER logging so we update the labels with the latest reconcileID
-	// after logging the prior reconcileID on the object
-
-	// ACTUALLY maybe we dont need this since we should assume that all updates are preceded by a GET that has the prior reconcileID
-	c.logOperation(obj, DELETE)
-	c.propagateLabels(obj)
-	res := c.Client.Delete(ctx, obj, opts...)
-	return res
+	c.trackOperation(ctx, obj, DELETE)
+	return c.Client.Delete(ctx, obj, opts...)
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	c.setReconcileID(ctx)
-	// TODO do we really need to propagate labels after logging the deletion?
-	// - tgoodwin 10-23-2024
-	c.logOperation(obj, DELETE)
-	c.propagateLabels(obj)
-	res := c.Client.DeleteAllOf(ctx, obj, opts...)
-	return res
-
+	c.trackOperation(ctx, obj, DELETE)
+	return c.Client.DeleteAllOf(ctx, obj, opts...)
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	c.setReconcileID(ctx)
 	// cast back to a client.Ojbject
 	objCopy, ok := obj.DeepCopyObject().(client.Object)
 	if !ok {
@@ -259,8 +253,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	}
 	err := c.Client.Get(ctx, key, obj, opts...)
 	c.setRootContext(obj)
-	c.logOperation(obj, GET)
-	c.logObjectVersion(obj)
+	c.trackOperation(ctx, obj, GET)
 	return err
 }
 
@@ -280,11 +273,6 @@ func (c *Client) isVisible(obj client.Object) bool {
 		return true
 	}
 	return true
-}
-
-func (c *Client) Observe(ctx context.Context, obj client.Object) {
-	c.setReconcileID(ctx)
-	c.logOperation(obj, GET)
 }
 
 func (c *Client) filterVisible(objs []client.Object) []client.Object {
@@ -330,46 +318,11 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	// need to record the knowledge snapshot this update is based on
-
-	// log observation before propagating labels to capture the label values before the update
-	c.logOperation(obj, UPDATE)
-	c.propagateLabels(obj)
-	res := c.Client.Update(ctx, obj, opts...)
-	return res
+	c.trackOperation(ctx, obj, UPDATE)
+	return c.Client.Update(ctx, obj, opts...)
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	// TODO verify labels propagate correctly under patch
-	c.logOperation(obj, PATCH)
-	c.propagateLabels(obj)
-	res := c.Client.Patch(ctx, obj, patch, opts...)
-	return res
-}
-
-func (c *Client) LabelChange(obj client.Object) error {
-	// labels := tag.GetChangeLabel()
-	// patch := map[string]interface{}{
-	// 	"metadata": map[string]interface{}{
-	// 		"labels": labels,
-	// 	},
-	// }
-	// patchBytes, err := json.Marshal(patch)
-	// if err != nil {
-	// 	panic("failed to marshal patch")
-	// }
-	objCopy := obj.DeepCopyObject().(client.Object)
-	labels := objCopy.GetLabels()
-	// if map is nil, create a new one
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	labels[tag.CHANGE_ID] = tag.GetChangeLabel()[tag.CHANGE_ID]
-	objCopy.SetLabels(labels)
-	patch := client.MergeFrom(obj)
-	if err := c.Patch(context.TODO(), objCopy, patch); err != nil {
-		c.logger.Error(err, "failed to patch object")
-		return err
-	}
-	return nil
+	c.trackOperation(ctx, obj, PATCH)
+	return c.Client.Patch(ctx, obj, patch, opts...)
 }

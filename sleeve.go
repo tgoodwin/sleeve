@@ -20,6 +20,3 @@ func TrackSnapshots() client.Option {
 func Wrap(wrapped kclient.Client) *client.Client {
 	return client.Wrap(wrapped)
 }
-func NewClient(wrapped kclient.Client) *client.Client {
-	return client.Wrap(wrapped)
-}
