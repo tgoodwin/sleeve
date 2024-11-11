@@ -9,6 +9,9 @@ import (
 )
 
 type DiffReporter struct {
+	Prev Record
+	Curr Record
+
 	path   cmp.Path
 	deltas []Delta
 }

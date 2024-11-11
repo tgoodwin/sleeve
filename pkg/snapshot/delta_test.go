@@ -6,15 +6,46 @@ import (
 )
 
 func TestEliminates(t *testing.T) {
-	d1 := Delta{
-		prev: reflect.ValueOf("foo"),
-		curr: reflect.ValueOf("bar"),
+	type testCase struct {
+		name     string
+		d1       Delta
+		d2       Delta
+		expected bool
 	}
-	d2 := Delta{
-		prev: reflect.ValueOf("bar"),
-		curr: reflect.ValueOf("foo"),
+	testCases := []testCase{
+		{
+			name: "same path, prev eliminates curr",
+			d1: Delta{
+				prev: reflect.ValueOf("foo"),
+				curr: reflect.ValueOf("bar"),
+			},
+			d2: Delta{
+				prev: reflect.ValueOf("bar"),
+				curr: reflect.ValueOf("foo"),
+			},
+			expected: true,
+		},
+		{
+			name: "different path, prev eliminates curr",
+			d1: Delta{
+				path: "abc",
+				prev: reflect.ValueOf("foo"),
+				curr: reflect.ValueOf("bar"),
+			},
+			d2: Delta{
+				path: "abcdef",
+				prev: reflect.ValueOf("bar"),
+				curr: reflect.ValueOf("foo"),
+			},
+			expected: false,
+		},
 	}
-	if !d1.Eliminates(d2) {
-		t.Errorf("expected d1 to eliminate d2")
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.d1.Eliminates(tc.d2) != tc.expected {
+				t.Errorf("expected %v to eliminate %v", tc.d1, tc.d2)
+			}
+		})
 	}
 }

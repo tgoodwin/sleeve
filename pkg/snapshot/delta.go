@@ -12,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// Delta represents a change between two fields in an object
+// where a diff between two versions of an object is represented by a collection of Deltas
 type Delta struct {
 	path string
 	prev reflect.Value
@@ -51,7 +53,7 @@ func ReadFile(f io.Reader) ([]Record, error) {
 	scanner := bufio.NewScanner(f)
 	records := make([]Record, 0)
 	for scanner.Scan() {
-		r, err := loadFromString(scanner.Text())
+		r, err := LoadFromString(scanner.Text())
 		if err != nil {
 			return nil, err
 		}
@@ -65,23 +67,33 @@ func ReadFile(f io.Reader) ([]Record, error) {
 }
 
 func GroupByID(records []Record) map[string][]Record {
+	seen := make(map[uniqueKey]struct{})
 	groups := make(map[string][]Record)
 	for _, r := range records {
+		if _, ok := seen[uniqueKey{r.Kind, r.ObjectID, r.Version}]; ok {
+			continue
+		}
+		seen[uniqueKey{r.Kind, r.ObjectID, r.Version}] = struct{}{}
+
 		if _, ok := groups[r.ObjectID]; !ok {
 			groups[r.ObjectID] = make([]Record, 0)
 		}
 		groups[r.ObjectID] = append(groups[r.ObjectID], r)
 	}
+
 	return groups
 }
 
-func loadFromString(s string) (Record, error) {
+func LoadFromString(s string) (Record, error) {
 	var r Record
 	err := json.Unmarshal([]byte(s), &r)
 	return r, err
 }
 
 func (r Record) Diff(other Record) (string, error) {
+	if r.Kind != other.Kind || r.ObjectID != other.ObjectID {
+		return "", fmt.Errorf("cannot diff records with different kinds or object IDs")
+	}
 	this := unstructured.Unstructured{}
 	otherObj := unstructured.Unstructured{}
 	if err := json.Unmarshal([]byte(r.Value), &this); err != nil {
@@ -90,7 +102,9 @@ func (r Record) Diff(other Record) (string, error) {
 	if err := json.Unmarshal([]byte(other.Value), &otherObj); err != nil {
 		return "", err
 	}
-	return computeDelta(&this, &otherObj), nil
+	reporter := DiffReporter{Prev: r, Curr: other}
+	header := fmt.Sprintf("%s/%s\n\t- currVersion: %s\n\t- prevVersion:%s", r.Kind, r.ObjectID, other.Version, r.Version)
+	return fmt.Sprintf("%s\nDeltas:\n%s", header, computeDelta(reporter, &this, &otherObj)), nil
 }
 
 var toIgnore = map[string]struct{}{
@@ -113,10 +127,9 @@ func shouldIgnore(k string, v interface{}) bool {
 	return false
 }
 
-func computeDelta(old, new *unstructured.Unstructured) string {
+func computeDelta(dr DiffReporter, old, new *unstructured.Unstructured) string {
 	cmpOpt := cmpopts.IgnoreMapEntries(shouldIgnore)
-	var r DiffReporter
-	cmp.Diff(old, new, cmpOpt, cmp.Reporter(&r))
-	rdiff := r.String()
+	cmp.Diff(old, new, cmpOpt, cmp.Reporter(&dr))
+	rdiff := dr.String()
 	return rdiff
 }
