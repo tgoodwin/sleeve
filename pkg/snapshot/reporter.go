@@ -5,11 +5,12 @@ import (
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/samber/lo"
 )
 
 type DiffReporter struct {
-	path  cmp.Path
-	diffs []string
+	path   cmp.Path
+	deltas []Delta
 }
 
 func (r *DiffReporter) PushStep(ps cmp.PathStep) {
@@ -23,15 +24,15 @@ func (r *DiffReporter) PopStep() {
 func (r *DiffReporter) Report(rs cmp.Result) {
 	if !rs.Equal() {
 		vx, vy := r.path.Last().Values()
-		// handle the case where the diff is the creation of a new field
-		if !vx.IsValid() {
-			r.diffs = append(r.diffs, fmt.Sprintf("%#v:\n\t-: %+v\n\t+: %+v\n", r.path, nil, vy))
-			return
-		}
-		r.diffs = append(r.diffs, fmt.Sprintf("%#v:\n\t-: %+v\n\t+: %+v\n", r.path, vx, vy))
+		d := Delta{path: fmt.Sprintf("%#v", r.path), prev: vx, curr: vy}
+		r.deltas = append(r.deltas, d)
 	}
 }
 
 func (r *DiffReporter) String() string {
-	return strings.Join(r.diffs, "\n")
+	diffs := lo.Map(r.deltas, func(d Delta, _ int) string {
+		return d.String()
+	})
+
+	return strings.Join(diffs, "\n")
 }

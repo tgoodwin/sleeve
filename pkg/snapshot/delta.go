@@ -3,12 +3,42 @@ package snapshot
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
+	"reflect"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+type Delta struct {
+	path string
+	prev reflect.Value
+	curr reflect.Value
+}
+
+func (d Delta) String() string {
+	if !d.prev.IsValid() {
+		return fmt.Sprintf("%s:\n\t-: %+v\n\t+: %+v\n", d.path, nil, d.curr)
+	}
+	if !d.curr.IsValid() {
+		return fmt.Sprintf("%s:\n\t-: %+v\n\t+: %+v\n", d.path, d.prev, nil)
+	}
+	return fmt.Sprintf("%s:\n\t-: %+v\n\t+: %+v\n", d.path, d.prev, d.curr)
+}
+
+func (d Delta) Eliminates(other Delta) bool {
+	if d.path == other.path {
+		if d.prev.String() == other.curr.String() {
+			return true
+		}
+		if d.curr.String() == other.prev.String() {
+			return true
+		}
+	}
+	return false
+}
 
 type uniqueKey struct {
 	Kind     string
@@ -21,7 +51,7 @@ func ReadFile(f io.Reader) ([]Record, error) {
 	scanner := bufio.NewScanner(f)
 	records := make([]Record, 0)
 	for scanner.Scan() {
-		r, err := LoadFromString(scanner.Text())
+		r, err := loadFromString(scanner.Text())
 		if err != nil {
 			return nil, err
 		}
@@ -45,7 +75,7 @@ func GroupByID(records []Record) map[string][]Record {
 	return groups
 }
 
-func LoadFromString(s string) (Record, error) {
+func loadFromString(s string) (Record, error) {
 	var r Record
 	err := json.Unmarshal([]byte(s), &r)
 	return r, err
@@ -64,9 +94,10 @@ func (r Record) Diff(other Record) (string, error) {
 }
 
 var toIgnore = map[string]struct{}{
-	"resourceVersion": {},
-	"managedFields":   {},
-	"generation":      {},
+	"resourceVersion":    {},
+	"managedFields":      {},
+	"generation":         {},
+	"observedGeneration": {},
 
 	// sleeve labels
 	"discrete.events/change-id":               {},
