@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
@@ -65,6 +66,15 @@ func main() {
 	})
 	controllerOps = stripLogtypeFromLines(controllerOps)
 	fmt.Println("Controller Operations:", len(controllerOps))
+
+	events := lo.Map(controllerOps, func(l string, _ int) event.Event {
+		var e event.Event
+		if err := e.UnmarshalJSON([]byte(l)); err != nil {
+			panic(err.Error())
+		}
+		return e
+	})
+	fmt.Println("events:", len(events))
 
 	versions := lo.FilterMap(lines, func(l string, _ int) (string, bool) {
 		return l, strings.Contains(l, ObjectVersion)
