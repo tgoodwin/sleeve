@@ -5,12 +5,12 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strings"
 
 	"github.com/goccy/go-graphviz"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
 var readOps map[client.OperationType]struct{} = map[client.OperationType]struct{}{
@@ -59,17 +59,8 @@ func BackfillLabels(events []*event.Event) []*event.Event {
 	return events
 }
 
-func shorter(s string) string {
-	// split at the first occurrence of '-' and return the first part
-	idx := strings.Index(s, "-")
-	if idx == -1 {
-		return s
-	}
-	return s[:strings.Index(s, "-")]
-}
-
 func getNodeName(e *event.Event) string {
-	return fmt.Sprintf("%s:%s:%s", e.Kind, shorter(e.ObjectID), shorter(e.CausalID().String()))
+	return fmt.Sprintf("%s:%s:%s", e.Kind, util.Shorter(e.ObjectID), util.Shorter(e.CausalID().String()))
 }
 
 func Graph(events []*event.Event) {
@@ -106,7 +97,7 @@ func Graph(events []*event.Event) {
 			for _, readEvent := range readEvents {
 				r, _ := graph.CreateNodeByName(getNodeName(readEvent))
 				e, _ := graph.CreateEdgeByName(fmt.Sprintf("%s:%s", readEvent.CausalID().String(), writeEvent.CausalID().String()), r, w)
-				e.SetLabel(shorter(rid))
+				e.SetLabel(util.Shorter(rid))
 			}
 		}
 	}
