@@ -16,6 +16,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -137,13 +138,19 @@ func (c *Client) setReconcileID(ctx context.Context) {
 		panic("reconcileID not set in context")
 	}
 
-	if rid != c.reconcileID {
+	if c.reconcileID == "" {
+		// first time setting reconcileID
+		c.reconcileID = string(rid)
+	} else if c.reconcileID != "" && rid != c.reconcileID {
 		// we are entering a new reconcile invocation
 		// first, clear out stuff
 		c.logger.V(2).Info("reconcileID changed", "old", c.reconcileID, "new", rid)
 		c.rootID = ""
 		// then, update to the new reconcileID.
 		c.reconcileID = string(rid)
+	} else {
+		// reconcileID is the same as before, nothing to do
+		return
 	}
 }
 
@@ -154,7 +161,7 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 		ControllerID: c.id,
 		RootEventID:  c.rootID,
 		OpType:       string(op),
-		Kind:         obj.GetObjectKind().GroupVersionKind().Kind,
+		Kind:         util.GetKind(obj),
 		ObjectID:     string(obj.GetUID()),
 		Version:      obj.GetResourceVersion(),
 		Labels:       obj.GetLabels(),
@@ -187,16 +194,18 @@ func (c *Client) setRootContext(obj client.Object) {
 	}
 	if c.rootID != "" && c.rootID != rootID {
 		c.logger.WithValues(
+			"ControllerID", c.id,
+			"ReconcileID", c.reconcileID,
 			"RootID", c.rootID,
 			"NewRootID", rootID,
 		).V(2).Error(nil, "Root context changed")
 	}
 	c.rootID = rootID
-	c.logger.V(2).WithValues(
-		"RootID", c.rootID,
-		"ObjectKind", obj.GetObjectKind().GroupVersionKind().String(),
-		"ObjectUID", obj.GetUID(),
-	).Info("Root context set")
+	// c.logger.V(2).WithValues(
+	// 	"RootID", c.rootID,
+	// 	"ObjectKind", obj.GetObjectKind().GroupVersionKind().String(),
+	// 	"ObjectUID", obj.GetUID(),
+	// ).Info("Root context set")
 }
 
 func (c *Client) propagateLabels(obj client.Object) {
@@ -303,6 +312,8 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 	out := reflect.MakeSlice(itemsValue.Type(), 0, itemsValue.Len())
 	for i := 0; i < itemsValue.Len(); i++ {
 		item := itemsValue.Index(i).Addr().Interface().(client.Object)
+		// instead of treating the LIST operation as a singular observation event,
+		// we treat each item in the list as a separate event
 		c.logOperation(item, LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
