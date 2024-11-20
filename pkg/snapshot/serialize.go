@@ -2,8 +2,11 @@ package snapshot
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"regexp"
 
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -12,6 +15,16 @@ type Record struct {
 	Kind     string `json:"kind"`
 	Version  string `json:"version"`
 	Value    string `json:"value"`
+}
+
+func (r Record) GetID() string {
+	kind := r.Kind
+	re := regexp.MustCompile(`Kind=([^,]+)`)
+	matches := re.FindStringSubmatch(kind)
+	if len(matches) > 1 {
+		kind = matches[1]
+	}
+	return fmt.Sprintf("%s:%s@%s", kind, util.Shorter(r.ObjectID), r.Version)
 }
 
 var toMask = map[string]struct{}{

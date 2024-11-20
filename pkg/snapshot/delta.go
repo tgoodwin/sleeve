@@ -103,7 +103,7 @@ func (r Record) Diff(other Record) (string, error) {
 		return "", err
 	}
 	reporter := DiffReporter{Prev: r, Curr: other}
-	header := fmt.Sprintf("%s/%s\n\t- currVersion: %s\n\t- prevVersion:%s", r.Kind, r.ObjectID, other.Version, r.Version)
+	header := fmt.Sprintf("currVersion: %s\nprevVersion:%s", other.GetID(), r.GetID())
 	return fmt.Sprintf("%s\nDeltas:\n%s", header, computeDelta(reporter, &this, &otherObj)), nil
 }
 
