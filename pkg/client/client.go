@@ -174,10 +174,8 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
-	if c.config.LogObjectSnapshots {
-		r := snapshot.RecordValue(obj)
-		c.logger.WithValues("LogType", OBJECT_VERSION_KEY).Info(r)
-	}
+	r := snapshot.RecordValue(obj)
+	c.logger.WithValues("LogType", OBJECT_VERSION_KEY).Info(r)
 }
 
 func (c *Client) setRootContext(obj client.Object) {
@@ -227,6 +225,9 @@ func (c *Client) trackOperation(ctx context.Context, obj client.Object, op Opera
 		tag.LabelChange(obj)
 	}
 	c.logOperation(obj, op)
+	if c.config.LogObjectSnapshots {
+		c.logObjectVersion(obj)
+	}
 	// propagate labels after logging so we capture the label values before the operation
 	c.propagateLabels(obj)
 }
