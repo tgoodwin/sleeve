@@ -25,12 +25,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime/pkg/controller"
 )
 
-var log = logf.Log.WithName("sleeveless")
+var log = logf.Log.WithName(tag.LoggerName)
 
 // enum for controller operation types
 type OperationType string
 
-var (
+const (
 	INIT   OperationType = "INIT"
 	GET    OperationType = "GET"
 	LIST   OperationType = "LIST"
@@ -46,9 +46,6 @@ var mutationTypes = map[OperationType]struct{}{
 	DELETE: {},
 	PATCH:  {},
 }
-
-var OPERATION_KEY = "sleeve:controller-operation"
-var OBJECT_VERSION_KEY = "sleeve:object-version"
 
 func createFixedLengthHash() string {
 	// Get the current time
@@ -163,20 +160,20 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 	if err != nil {
 		panic("failed to marshal event")
 	}
-	c.logger.WithValues("LogType", OPERATION_KEY).Info(string(eventJSON))
+	c.logger.WithValues("LogType", tag.ControllerOperationKey).Info(string(eventJSON))
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
 	r := snapshot.RecordValue(obj)
-	c.logger.WithValues("LogType", OBJECT_VERSION_KEY).Info(r)
+	c.logger.WithValues("LogType", tag.ObjectVersionKey).Info(r)
 }
 
 func (c *Client) setRootContext(obj client.Object) {
 	labels := obj.GetLabels()
 	// set by the webhook
-	rootID, ok := labels[tag.TRACEY_WEBHOOK_LABEL]
+	rootID, ok := labels[tag.TraceyWebhookLabel]
 	if !ok {
-		rootID, ok = labels[tag.TRACEY_ROOT_ID]
+		rootID, ok = labels[tag.TraceyRootID]
 		if !ok {
 			// no root context to set
 			c.logger.V(2).Error(nil, fmt.Sprintf("Root context not set on %s object", util.GetKind(obj)))
@@ -201,9 +198,9 @@ func (c *Client) propagateLabels(obj client.Object) {
 	for k, v := range currLabels {
 		out[k] = v
 	}
-	out[tag.TRACEY_CREATOR_ID] = c.id
-	out[tag.TRACEY_ROOT_ID] = c.reconcileContext.GetRootID()
-	out[tag.TRACEY_RECONCILE_ID] = c.reconcileContext.GetReconcileID()
+	out[tag.TraceyCreatorID] = c.id
+	out[tag.TraceyRootID] = c.reconcileContext.GetRootID()
+	out[tag.TraceyReconcileID] = c.reconcileContext.GetReconcileID()
 
 	obj.SetLabels(out)
 }
