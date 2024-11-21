@@ -72,7 +72,7 @@ func Serialize(obj interface{}) string {
 func RecordValue(obj client.Object) string {
 	r := Record{
 		ObjectID: string(obj.GetUID()),
-		Kind:     obj.GetObjectKind().GroupVersionKind().String(),
+		Kind:     util.GetKind(obj),
 		Version:  obj.GetResourceVersion(),
 		Value:    Serialize(obj),
 	}

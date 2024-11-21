@@ -1,6 +1,8 @@
 package tag
 
 import (
+	"fmt"
+
 	"github.com/google/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -39,6 +41,23 @@ func GetChangeLabel() map[string]string {
 	labels := make(map[string]string)
 	labels[CHANGE_ID] = uuid.New().String()
 	return labels
+}
+
+func SanityCheckLabels(obj client.Object) error {
+	labels := obj.GetLabels()
+	if labels == nil {
+		return nil
+	}
+	if webhookLabel, ok := labels[TRACEY_WEBHOOK_LABEL]; ok {
+		if rootID, ok := labels[TRACEY_ROOT_ID]; ok {
+			if webhookLabel != rootID {
+				// logf.Log.WithValues("key", "val").Error(nil, "labeling assumptions violated")
+				return fmt.Errorf("labeling assumptions violated: tracey-uid=%s, root-event-id=%s", webhookLabel, rootID)
+
+			}
+		}
+	}
+	return nil
 }
 
 type LabelContext struct {

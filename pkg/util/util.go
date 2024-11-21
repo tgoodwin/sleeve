@@ -7,6 +7,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Shorter is used to shorten a UID for display purposes only.
 func Shorter(s string) string {
 	if idx := strings.Index(s, "-"); idx != -1 {
 		return s[:idx]
