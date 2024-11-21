@@ -78,11 +78,7 @@ type Client struct {
 	// identifier for the reconciler (controller name)
 	id string
 
-	// used to scope observations to a given Reconcile invocation
-	reconcileID string
-
-	// root event ID
-	rootID string
+	reconcileContext *ReconcileContext
 
 	logger logr.Logger
 
@@ -93,9 +89,10 @@ var _ client.Client = (*Client)(nil)
 
 func newClient(wrapped client.Client) *Client {
 	return &Client{
-		Client: wrapped,
-		logger: log,
-		config: NewConfig(),
+		Client:           wrapped,
+		logger:           log,
+		reconcileContext: &ReconcileContext{},
+		config:           NewConfig(),
 	}
 }
 
@@ -138,28 +135,24 @@ func (c *Client) setReconcileID(ctx context.Context) {
 		panic("reconcileID not set in context")
 	}
 
-	if c.reconcileID == "" {
+	currReconcileID := c.reconcileContext.GetReconcileID()
+	if currReconcileID == "" {
 		// first time setting reconcileID
-		c.reconcileID = string(rid)
-	} else if c.reconcileID != "" && rid != c.reconcileID {
-		// we are entering a new reconcile invocation
-		// first, clear out stuff
-		c.logger.V(2).Info("reconcileID changed", "old", c.reconcileID, "new", rid)
-		c.rootID = ""
-		// then, update to the new reconcileID.
-		c.reconcileID = string(rid)
-	} else {
-		// reconcileID is the same as before, nothing to do
-		return
+		c.reconcileContext.SetReconcileID(string(rid))
+	} else if rid != currReconcileID {
+		c.logger.V(2).Info("reconcileID changed", "old", currReconcileID, "new", rid)
+		// unset rootID if reconcileID changes
+		c.reconcileContext.SetRootID("")
+		c.reconcileContext.SetReconcileID(string(rid))
 	}
 }
 
 func (c *Client) logOperation(obj client.Object, op OperationType) {
 	event := &event.Event{
 		Timestamp:    fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
-		ReconcileID:  c.reconcileID,
+		ReconcileID:  c.reconcileContext.GetReconcileID(),
 		ControllerID: c.id,
-		RootEventID:  c.rootID,
+		RootEventID:  c.reconcileContext.GetRootID(),
 		OpType:       string(op),
 		Kind:         util.GetKind(obj),
 		ObjectID:     string(obj.GetUID()),
@@ -186,24 +179,20 @@ func (c *Client) setRootContext(obj client.Object) {
 		rootID, ok = labels[tag.TRACEY_ROOT_ID]
 		if !ok {
 			// no root context to set
-			c.logger.V(2).Error(nil, "Root context not set")
+			c.logger.V(2).Error(nil, fmt.Sprintf("Root context not set on %s object", util.GetKind(obj)))
 			return
 		}
 	}
-	if c.rootID != "" && c.rootID != rootID {
+	currRootID := c.reconcileContext.GetRootID()
+	if currRootID != "" && currRootID != rootID {
 		c.logger.WithValues(
 			"ControllerID", c.id,
-			"ReconcileID", c.reconcileID,
-			"RootID", c.rootID,
+			"ReconcileID", c.reconcileContext.GetReconcileID(),
+			"RootID", c.reconcileContext.GetRootID(),
 			"NewRootID", rootID,
-		).V(2).Error(nil, "Root context changed")
+		).V(2).Error(nil, "Root context changed during reconcile")
 	}
-	c.rootID = rootID
-	// c.logger.V(2).WithValues(
-	// 	"RootID", c.rootID,
-	// 	"ObjectKind", obj.GetObjectKind().GroupVersionKind().String(),
-	// 	"ObjectUID", obj.GetUID(),
-	// ).Info("Root context set")
+	c.reconcileContext.SetRootID(rootID)
 }
 
 func (c *Client) propagateLabels(obj client.Object) {
@@ -213,14 +202,24 @@ func (c *Client) propagateLabels(obj client.Object) {
 		out[k] = v
 	}
 	out[tag.TRACEY_CREATOR_ID] = c.id
-	out[tag.TRACEY_ROOT_ID] = c.rootID
-	out[tag.TRACEY_RECONCILE_ID] = c.reconcileID
+	out[tag.TRACEY_ROOT_ID] = c.reconcileContext.GetRootID()
+	out[tag.TRACEY_RECONCILE_ID] = c.reconcileContext.GetReconcileID()
 
 	obj.SetLabels(out)
 }
 
 func (c *Client) trackOperation(ctx context.Context, obj client.Object, op OperationType) {
+	// crash if any of our labeling assumptions are violated
+	if err := tag.SanityCheckLabels(obj); err != nil {
+		panic(err)
+	}
+
 	c.setReconcileID(ctx)
+
+	// for read operations, set the root context for this reconcile invocation
+	if op == GET || op == LIST {
+		c.setRootContext(obj)
+	}
 	if _, ok := mutationTypes[op]; ok {
 		tag.LabelChange(obj)
 	}
@@ -228,7 +227,8 @@ func (c *Client) trackOperation(ctx context.Context, obj client.Object, op Opera
 	if c.config.LogObjectSnapshots {
 		c.logObjectVersion(obj)
 	}
-	// propagate labels after logging so we capture the label values before the operation
+	// propagate labels after logging so we capture the label values prior to the operation
+	// e.g. we want to log out "prev-write-reconcile-id" before it gets overwritten with the current reconcileID
 	c.propagateLabels(obj)
 }
 
@@ -262,7 +262,6 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return apierrors.NewNotFound(schema.GroupResource{}, key.Name)
 	}
 	err := c.Client.Get(ctx, key, obj, opts...)
-	c.setRootContext(obj)
 	c.trackOperation(ctx, obj, GET)
 	return err
 }
@@ -296,7 +295,6 @@ func (c *Client) filterVisible(objs []client.Object) []client.Object {
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	c.setReconcileID(ctx)
 	// Perform the List operation on the wrapped client
 	lc := list.DeepCopyObject().(client.ObjectList)
 	if err := c.Client.List(ctx, lc, opts...); err != nil {
@@ -315,7 +313,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		item := itemsValue.Index(i).Addr().Interface().(client.Object)
 		// instead of treating the LIST operation as a singular observation event,
 		// we treat each item in the list as a separate event
-		c.logOperation(item, LIST)
+		c.trackOperation(ctx, item, LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
 
