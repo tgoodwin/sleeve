@@ -20,25 +20,28 @@ type ReconcilerHarness struct {
 	frameDataByFrameID map[string]CacheFrame
 
 	// data effect by frameID (reconcileID)
-	effects map[string]DataEffect
+	tracedEffects map[string]DataEffect
 
-	// this is the reconciler that the frames will be replayed against
-	// and it should be constructed with p.Client()
-	// reconciler reconcile.Reconciler
+	replayEffects map[string]DataEffect
 }
 
 func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheFrame, effects map[string]DataEffect) *ReconcilerHarness {
+	replayEffects := make(map[string]DataEffect)
 	return &ReconcilerHarness{
 		frames:             frames,
 		frameDataByFrameID: frameData,
 		ReconcilerID:       reconcilerID,
-		effects:            effects,
+		tracedEffects:      effects,
+		replayEffects:      replayEffects,
 	}
 }
 
 func (p *ReconcilerHarness) ReplayClient() *Client {
-	// TODO implement effectRecorder
-	return NewClient(p.frameDataByFrameID, nil)
+	recorder := &Recorder{
+		reconcilerID:    p.ReconcilerID,
+		effectContainer: p.replayEffects,
+	}
+	return NewClient(p.frameDataByFrameID, recorder)
 }
 
 func (p *ReconcilerHarness) Load(r reconcile.Reconciler) *Player {
@@ -57,11 +60,14 @@ func (r *Player) Run() error {
 	for _, f := range r.harness.frames {
 		ctx := withFrameID(context.Background(), f.ID)
 		fmt.Printf("Replaying frame %s for controller %s\n", f.ID, r.harness.ReconcilerID)
-		fmt.Printf("Readset:\n%s\n", formatEventList(r.harness.effects[f.ID].Reads))
-		fmt.Printf("Expected Writeset:\n%s\n", formatEventList(r.harness.effects[f.ID].Writes))
+		fmt.Printf("Readset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Reads))
+		fmt.Printf("Expected Writeset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Writes))
+
 		if _, err := r.reconciler.Reconcile(ctx, f.Req); err != nil {
 			return err
 		}
+
+		fmt.Printf("Actual Writeset:\n%s\n", formatEventList(r.harness.replayEffects[f.ID].Writes))
 	}
 	return nil
 }

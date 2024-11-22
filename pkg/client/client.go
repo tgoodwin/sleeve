@@ -144,18 +144,28 @@ func (c *Client) setReconcileID(ctx context.Context) {
 	}
 }
 
-func (c *Client) logOperation(obj client.Object, op OperationType) {
-	event := &event.Event{
+func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op OperationType) *event.Event {
+	return &event.Event{
 		Timestamp:    fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
-		ReconcileID:  c.reconcileContext.GetReconcileID(),
-		ControllerID: c.id,
-		RootEventID:  c.reconcileContext.GetRootID(),
+		ReconcileID:  reconcileID,
+		ControllerID: controllerID,
+		RootEventID:  rootEventID,
 		OpType:       string(op),
 		Kind:         util.GetKind(obj),
 		ObjectID:     string(obj.GetUID()),
 		Version:      obj.GetResourceVersion(),
 		Labels:       obj.GetLabels(),
 	}
+}
+
+func (c *Client) logOperation(obj client.Object, op OperationType) {
+	event := Operation(
+		obj,
+		c.reconcileContext.GetReconcileID(),
+		c.id,
+		c.reconcileContext.GetRootID(),
+		op,
+	)
 	eventJSON, err := json.Marshal(event)
 	if err != nil {
 		panic("failed to marshal event")

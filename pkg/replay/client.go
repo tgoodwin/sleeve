@@ -49,6 +49,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	kind := inferKind(obj)
 	if frame, ok := c.framesByID[frameID]; ok {
 		if frozenObj, ok := frame[kind][key]; ok {
+			c.effectRecorder.RecordEffect(ctx, frozenObj, sleeveclient.GET)
 			reflect.ValueOf(obj).Elem().Set(reflect.ValueOf(frozenObj).Elem())
 			return nil
 		}
@@ -66,6 +67,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 			// get a slice of the objects from the map values
 			objs := make([]client.Object, 0, len(objsForKind))
 			for _, obj := range objsForKind {
+				c.effectRecorder.RecordEffect(ctx, obj, sleeveclient.LIST)
 				objs = append(objs, obj)
 			}
 			// set the Items field of the list object to the slice of objects
