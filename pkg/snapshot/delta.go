@@ -49,7 +49,7 @@ type uniqueKey struct {
 }
 
 func ReadFile(f io.Reader) ([]Record, error) {
-	seen := make(map[uniqueKey]struct{})
+	seen := make(map[VersionKey]struct{})
 	scanner := bufio.NewScanner(f)
 	records := make([]Record, 0)
 	for scanner.Scan() {
@@ -57,7 +57,7 @@ func ReadFile(f io.Reader) ([]Record, error) {
 		if err != nil {
 			return nil, err
 		}
-		key := uniqueKey{r.Kind, r.ObjectID, r.Version}
+		key := VersionKey{r.Kind, r.ObjectID, r.Version}
 		if _, ok := seen[key]; !ok {
 			records = append(records, r)
 			seen[key] = struct{}{}
@@ -67,13 +67,13 @@ func ReadFile(f io.Reader) ([]Record, error) {
 }
 
 func GroupByID(records []Record) map[string][]Record {
-	seen := make(map[uniqueKey]struct{})
+	seen := make(map[VersionKey]struct{})
 	groups := make(map[string][]Record)
 	for _, r := range records {
-		if _, ok := seen[uniqueKey{r.Kind, r.ObjectID, r.Version}]; ok {
+		if _, ok := seen[VersionKey{r.Kind, r.ObjectID, r.Version}]; ok {
 			continue
 		}
-		seen[uniqueKey{r.Kind, r.ObjectID, r.Version}] = struct{}{}
+		seen[VersionKey{r.Kind, r.ObjectID, r.Version}] = struct{}{}
 
 		if _, ok := groups[r.ObjectID]; !ok {
 			groups[r.ObjectID] = make([]Record, 0)
