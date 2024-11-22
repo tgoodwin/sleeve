@@ -216,14 +216,18 @@ func (c *Client) trackOperation(ctx context.Context, obj client.Object, op Opera
 	// for read operations, set the root context for this reconcile invocation
 	if op == GET || op == LIST {
 		c.setRootContext(obj)
+
+		// only log versions as they are observed during read operations
+		// otherwise the logged version might miss some defaulted values
+		// that downstream APIs may depend on
+		if c.config.LogObjectSnapshots {
+			c.logObjectVersion(obj)
+		}
 	}
 	if _, ok := mutationTypes[op]; ok {
 		tag.LabelChange(obj)
 	}
 	c.logOperation(obj, op)
-	if c.config.LogObjectSnapshots {
-		c.logObjectVersion(obj)
-	}
 	// propagate labels after logging so we capture the label values prior to the operation
 	// e.g. we want to log out "prev-write-reconcile-id" before it gets overwritten with the current reconcileID
 	c.propagateLabels(obj)
