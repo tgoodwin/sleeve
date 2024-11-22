@@ -10,14 +10,19 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/tag"
 )
 
-func ParseRecordsFromLines(lines []string) ([]snapshot.Record, error) {
-	sleeveLines := lo.FilterMap(lines, func(l string, _ int) (string, bool) {
+func filterSleeveLines(lines []string) []string {
+	return lo.FilterMap(lines, func(l string, _ int) (string, bool) {
 		parts := strings.SplitN(l, tag.LoggerName, 2)
+		isSleeveLine := strings.Contains(l, tag.LoggerName)
 		if len(parts) > 1 {
 			l = strings.TrimSpace(parts[1])
 		}
-		return l, strings.Contains(l, tag.LoggerName)
+		return l, isSleeveLine
 	})
+}
+
+func ParseRecordsFromLines(lines []string) ([]snapshot.Record, error) {
+	sleeveLines := filterSleeveLines(lines)
 	versionLines := lo.FilterMap(sleeveLines, func(l string, _ int) (string, bool) {
 		return tag.StripLogKey(l), strings.Contains(l, tag.ObjectVersionKey)
 	})
@@ -36,13 +41,7 @@ func ParseRecordsFromLines(lines []string) ([]snapshot.Record, error) {
 }
 
 func ParseEventsFromLines(lines []string) ([]event.Event, error) {
-	sleeveLines := lo.FilterMap(lines, func(l string, _ int) (string, bool) {
-		parts := strings.SplitN(l, tag.LoggerName, 2)
-		if len(parts) > 1 {
-			l = strings.TrimSpace(parts[1])
-		}
-		return l, strings.Contains(l, tag.LoggerName)
-	})
+	sleeveLines := filterSleeveLines(lines)
 	eventLines := lo.FilterMap(sleeveLines, func(l string, _ int) (string, bool) {
 		return tag.StripLogKey(l), strings.Contains(l, tag.ControllerOperationKey)
 	})
