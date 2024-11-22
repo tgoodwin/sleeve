@@ -9,6 +9,7 @@ type Config struct {
 
 func NewConfig() *Config {
 	return &Config{
+		LogObjectSnapshots:    true,
 		visibilityDelayByKind: make(map[string]time.Duration),
 	}
 }
