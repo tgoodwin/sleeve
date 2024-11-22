@@ -116,12 +116,16 @@ func (b *Builder) ConstructHarness(controllerID string) (*ReconcilerHarness, err
 
 	frameData := make(map[string]CacheFrame)
 	frames := make([]Frame, 0)
+	effects := make(map[string]DataEffect)
+
 	for reconcileID, events := range byReconcileID {
-		req, err := b.inferReconcileRequestFromReadset(controllerID, events)
+		reads, writes := event.FilterReadsWrites(events)
+		effects[reconcileID] = DataEffect{Reads: reads, Writes: writes}
+		req, err := b.inferReconcileRequestFromReadset(controllerID, reads)
 		if err != nil {
 			return nil, err
 		}
-		cacheFrame, err := b.generateCacheFrame(events)
+		cacheFrame, err := b.generateCacheFrame(reads)
 		if err != nil {
 			return nil, err
 		}
@@ -129,16 +133,13 @@ func (b *Builder) ConstructHarness(controllerID string) (*ReconcilerHarness, err
 		frames = append(frames, Frame{ID: reconcileID, Req: req})
 	}
 
-	player := NewPlayer(controllerID, frames, frameData)
-	return player, nil
+	harness := newHarness(controllerID, frames, frameData, effects)
+	return harness, nil
 }
 
 func (r *Builder) generateCacheFrame(events []event.Event) (CacheFrame, error) {
 	cacheFrame := make(CacheFrame)
-	readEvents := lo.Filter(events, func(e event.Event, _ int) bool {
-		return e.OpType == "GET" || e.OpType == "LIST"
-	})
-	for _, e := range readEvents {
+	for _, e := range events {
 		key := snapshot.VersionKey{Kind: e.Kind, ObjectID: e.ObjectID, Version: e.Version}
 		if obj, ok := r.store[key]; ok {
 			if _, ok := cacheFrame[e.Kind]; !ok {
