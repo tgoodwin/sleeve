@@ -9,7 +9,7 @@ import (
 
 // logging labels
 const (
-	LoggerName             = "sleeve"
+	LoggerName             = "sleevelog"
 	ControllerOperationKey = "sleeve:controller-operation"
 	ObjectVersionKey       = "sleeve:object-version"
 )
