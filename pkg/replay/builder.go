@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -33,6 +33,8 @@ func frameIDFromContext(ctx context.Context) string {
 
 // Like the frames of a movie, a Frame is a snapshot of the state of the world at a particular point in time.
 type Frame struct {
+	// for ordering
+	sequenceID string
 	// snaps map[schema.GroupVersionKind]map[string]client.Object
 	ID  string
 	Req reconcile.Request
@@ -40,7 +42,16 @@ type Frame struct {
 }
 
 // keyed by Type (Kind) and then by NamespacedName
-type CacheFrame map[string]map[types.NamespacedName]client.Object
+type CacheFrame map[string]map[types.NamespacedName]*unstructured.Unstructured
+
+func DumpCacheFrameContents(c CacheFrame) {
+	fmt.Println("CacheFrame contents:")
+	for kind, objs := range c {
+		for nn := range objs {
+			fmt.Printf("\t%s/%s/%s\n", kind, nn.Namespace, nn.Name)
+		}
+	}
+}
 
 // TODO
 // - need to index snapshot records by Kind somehow to support List operations
@@ -119,6 +130,8 @@ func (b *Builder) ConstructHarness(controllerID string) (*ReconcilerHarness, err
 	effects := make(map[string]DataEffect)
 
 	for reconcileID, events := range byReconcileID {
+		earliestTs := events[0].Timestamp
+
 		reads, writes := event.FilterReadsWrites(events)
 		effects[reconcileID] = DataEffect{Reads: reads, Writes: writes}
 		req, err := b.inferReconcileRequestFromReadset(controllerID, reads)
@@ -130,8 +143,13 @@ func (b *Builder) ConstructHarness(controllerID string) (*ReconcilerHarness, err
 			return nil, err
 		}
 		frameData[reconcileID] = cacheFrame
-		frames = append(frames, Frame{ID: reconcileID, Req: req})
+		frames = append(frames, Frame{ID: reconcileID, Req: req, sequenceID: earliestTs})
 	}
+
+	// sort the frames by sequenceID
+	sort.Slice(frames, func(i, j int) bool {
+		return frames[i].sequenceID < frames[j].sequenceID
+	})
 
 	harness := newHarness(controllerID, frames, frameData, effects)
 	return harness, nil
@@ -143,7 +161,7 @@ func (r *Builder) generateCacheFrame(events []event.Event) (CacheFrame, error) {
 		key := snapshot.VersionKey{Kind: e.Kind, ObjectID: e.ObjectID, Version: e.Version}
 		if obj, ok := r.store[key]; ok {
 			if _, ok := cacheFrame[e.Kind]; !ok {
-				cacheFrame[e.Kind] = make(map[types.NamespacedName]client.Object)
+				cacheFrame[e.Kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
 			}
 			cacheFrame[e.Kind][types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}] = obj
 		} else {
@@ -170,20 +188,20 @@ func (r *Builder) inferReconcileRequestFromReadset(controllerID string, readset 
 
 type replayStore struct {
 	// indexes all of the objects in the trace
-	store map[snapshot.VersionKey]client.Object
+	store map[snapshot.VersionKey]*unstructured.Unstructured
 	mu    sync.RWMutex
 }
 
 func newReplayStore() *replayStore {
 	return &replayStore{
-		store: make(map[snapshot.VersionKey]client.Object),
+		store: make(map[snapshot.VersionKey]*unstructured.Unstructured),
 	}
 }
 
 func (f *replayStore) Add(r snapshot.Record) error {
 	// Unmarshal the value into an unstructured object
 	key := snapshot.VersionKey{Kind: r.Kind, ObjectID: r.ObjectID, Version: r.Version}
-	fmt.Printf("adding key to store: %#v\n", key)
+	// fmt.Printf("adding key to store: %#v\n", key)
 	obj := unstructured.Unstructured{}
 	if err := json.Unmarshal([]byte(r.Value), &obj); err != nil {
 		return errors.Wrap(err, "unmarshaling record value")

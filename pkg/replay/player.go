@@ -6,6 +6,7 @@ import (
 
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/util"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -36,12 +37,12 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheF
 	}
 }
 
-func (p *ReconcilerHarness) ReplayClient() *Client {
+func (p *ReconcilerHarness) ReplayClient(scheme *runtime.Scheme) *Client {
 	recorder := &Recorder{
 		reconcilerID:    p.ReconcilerID,
 		effectContainer: p.replayEffects,
 	}
-	return NewClient(p.frameDataByFrameID, recorder)
+	return NewClient(scheme, p.frameDataByFrameID, recorder)
 }
 
 func (p *ReconcilerHarness) Load(r reconcile.Reconciler) *Player {
@@ -58,15 +59,21 @@ type Player struct {
 
 func (r *Player) Run() error {
 	for _, f := range r.harness.frames {
+		// skip frames with no writes
+		if len(r.harness.tracedEffects[f.ID].Writes) == 0 {
+			continue
+		}
 		ctx := withFrameID(context.Background(), f.ID)
 		fmt.Printf("Replaying frame %s for controller %s\n", f.ID, r.harness.ReconcilerID)
-		fmt.Printf("Readset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Reads))
-		fmt.Printf("Expected Writeset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Writes))
+		fmt.Printf("Traced Readset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Reads))
+		fmt.Printf("Traced Writeset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Writes))
 
 		if _, err := r.reconciler.Reconcile(ctx, f.Req); err != nil {
+			fmt.Println("Error during replay:", err)
 			return err
 		}
 
+		fmt.Printf("Actual Readset:\n%s\n", formatEventList(r.harness.replayEffects[f.ID].Reads))
 		fmt.Printf("Actual Writeset:\n%s\n", formatEventList(r.harness.replayEffects[f.ID].Writes))
 	}
 	return nil

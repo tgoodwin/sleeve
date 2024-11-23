@@ -2,11 +2,20 @@ package replay
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"reflect"
 
+	"github.com/go-logr/logr"
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
+
+var logger logr.Logger
 
 type EffectRecorder interface {
 	RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error
@@ -17,10 +26,13 @@ type Client struct {
 	*dummyClient
 	framesByID     map[string]CacheFrame
 	effectRecorder EffectRecorder
+
+	scheme *runtime.Scheme
 }
 
-func NewClient(frameData map[string]CacheFrame, effectRecorder EffectRecorder) *Client {
+func NewClient(scheme *runtime.Scheme, frameData map[string]CacheFrame, effectRecorder EffectRecorder) *Client {
 	return &Client{
+		scheme:         scheme,
 		dummyClient:    &dummyClient{},
 		framesByID:     frameData,
 		effectRecorder: effectRecorder,
@@ -45,20 +57,45 @@ func inferListKind(list client.ObjectList) string {
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	logger = log.FromContext(ctx)
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	// gvkToTypes := c.scheme.AllKnownTypes()
+	// if targetType, ok := gvkToTypes[gvk]; ok {
+	// 	// create a new object of the same type as obj
+	// 	newObj := reflect.New(targetType).Interface().(client.Object)
+	// 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).Object, newObj); err != nil {
+	// 		return err
+	// 	}
+	// }
+
 	frameID := frameIDFromContext(ctx)
 	kind := inferKind(obj)
+	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, ok := c.framesByID[frameID]; ok {
+		// DumpCacheFrameContents(frame)
 		if frozenObj, ok := frame[kind][key]; ok {
+			logger.V(2).Info("client:found object in frame")
 			c.effectRecorder.RecordEffect(ctx, frozenObj, sleeveclient.GET)
-			reflect.ValueOf(obj).Elem().Set(reflect.ValueOf(frozenObj).Elem())
-			return nil
+
+			// use json.Marshal to copy the frozen object into the obj
+			data, err := json.Marshal(frozenObj)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(data, obj); err != nil {
+				return err
+			}
+		} else {
+			return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 		}
+	} else {
+		return fmt.Errorf("frame %s not found", frameID)
 	}
 	return nil
 }
 
+// TODO
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	// TODO
 	frameID := frameIDFromContext(ctx)
 	kind := inferListKind(list)
 
