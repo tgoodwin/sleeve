@@ -15,7 +15,7 @@ type DataEffect struct {
 	Writes []event.Event
 }
 
-type ReconcilerHarness struct {
+type ReplayHarness struct {
 	ReconcilerID       string
 	frames             []Frame
 	frameDataByFrameID map[string]CacheFrame
@@ -26,9 +26,9 @@ type ReconcilerHarness struct {
 	replayEffects map[string]DataEffect
 }
 
-func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheFrame, effects map[string]DataEffect) *ReconcilerHarness {
+func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheFrame, effects map[string]DataEffect) *ReplayHarness {
 	replayEffects := make(map[string]DataEffect)
-	return &ReconcilerHarness{
+	return &ReplayHarness{
 		frames:             frames,
 		frameDataByFrameID: frameData,
 		ReconcilerID:       reconcilerID,
@@ -37,7 +37,7 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheF
 	}
 }
 
-func (p *ReconcilerHarness) ReplayClient(scheme *runtime.Scheme) *Client {
+func (p *ReplayHarness) ReplayClient(scheme *runtime.Scheme) *Client {
 	recorder := &Recorder{
 		reconcilerID:    p.ReconcilerID,
 		effectContainer: p.replayEffects,
@@ -45,7 +45,7 @@ func (p *ReconcilerHarness) ReplayClient(scheme *runtime.Scheme) *Client {
 	return NewClient(scheme, p.frameDataByFrameID, recorder)
 }
 
-func (p *ReconcilerHarness) Load(r reconcile.Reconciler) *Player {
+func (p *ReplayHarness) Load(r reconcile.Reconciler) *Player {
 	return &Player{
 		reconciler: r,
 		harness:    p,
@@ -54,10 +54,10 @@ func (p *ReconcilerHarness) Load(r reconcile.Reconciler) *Player {
 
 type Player struct {
 	reconciler reconcile.Reconciler
-	harness    *ReconcilerHarness
+	harness    *ReplayHarness
 }
 
-func (r *Player) Run() error {
+func (r *Player) Play() error {
 	for _, f := range r.harness.frames {
 		// skip frames with no writes
 		if len(r.harness.tracedEffects[f.ID].Writes) == 0 {

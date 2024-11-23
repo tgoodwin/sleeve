@@ -113,7 +113,7 @@ func (b *Builder) FromTrace(traceData []byte) error {
 	return nil
 }
 
-func (b *Builder) ConstructHarness(controllerID string) (*ReconcilerHarness, error) {
+func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 	if _, ok := b.reconcilerIDs[controllerID]; !ok {
 		return nil, fmt.Errorf("controllerID not found in trace: %s", controllerID)
 	}
