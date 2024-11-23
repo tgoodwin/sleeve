@@ -53,6 +53,14 @@ func DumpCacheFrameContents(c CacheFrame) {
 	}
 }
 
+func ParseTrace(traceData []byte) (*Builder, error) {
+	b := &Builder{}
+	if err := b.fromTrace(traceData); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 // TODO
 // - need to index snapshot records by Kind somehow to support List operations
 // - have the client hold some map of reconcileID -> map of NamespacedName => client.Object
@@ -73,7 +81,7 @@ type Builder struct {
 	reconcilerIDs map[string]struct{}
 }
 
-func (b *Builder) FromTrace(traceData []byte) error {
+func (b *Builder) fromTrace(traceData []byte) error {
 	rs := newReplayStore()
 	if err := rs.HydrateFromTrace(traceData); err != nil {
 		return err
