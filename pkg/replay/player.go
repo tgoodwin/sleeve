@@ -20,10 +20,13 @@ type ReplayHarness struct {
 	frames             []Frame
 	frameDataByFrameID map[string]CacheFrame
 
-	// data effect by frameID (reconcileID)
+	// trace data effect by frameID (reconcileID)
 	tracedEffects map[string]DataEffect
 
+	// container for the effects that are recorded during replay
 	replayEffects map[string]DataEffect
+
+	predicates []Predicate
 }
 
 func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheFrame, effects map[string]DataEffect) *ReplayHarness {
@@ -34,13 +37,20 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheF
 		ReconcilerID:       reconcilerID,
 		tracedEffects:      effects,
 		replayEffects:      replayEffects,
+		predicates:         make([]Predicate, 0),
 	}
+}
+
+func (p *ReplayHarness) WithPredicate(predicate Predicate) *ReplayHarness {
+	p.predicates = append(p.predicates, predicate)
+	return p
 }
 
 func (p *ReplayHarness) ReplayClient(scheme *runtime.Scheme) *Client {
 	recorder := &Recorder{
 		reconcilerID:    p.ReconcilerID,
 		effectContainer: p.replayEffects,
+		predicates:      p.predicates,
 	}
 	return NewClient(scheme, p.frameDataByFrameID, recorder)
 }

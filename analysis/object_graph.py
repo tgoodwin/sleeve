@@ -16,7 +16,8 @@ def shorter(id):
         return id
 
 def graph(data, versionmap):
-    colors = assign_colors_to_ids(data.keys())
+    # Assign colors to reconcile IDs
+    colors = assign_colors_to_ids([key for key in data.keys() if len(data[key]["writeset"]) > 0])
     dot = Digraph(comment='Event Graph2')
 
     # Add nodes and edges
@@ -205,8 +206,8 @@ def readsets_to_writesets(events_by_reconcile_id):
 def process(lines):
     # first, separate out controller observations
     # log lines from our instrumentation
-    content = [line for line in lines if "sleeveless" in line]
-    content = [line.split("sleeveless")[1].strip() for line in content]
+    content = [line for line in lines if "sleevelog" in line]
+    content = [line.split("sleevelog")[1].strip() for line in content]
 
     # split into conroller-operation and object-version
     controller_ops = [line for line in content if "sleeve:controller-operation" in line]
