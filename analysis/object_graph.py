@@ -6,6 +6,8 @@ from colors import assign_colors_to_ids
 from log2json import strip_logtype_from_lines
 from versionmapper import process as version_process
 
+SLEEVE_LOG_KEYWORD = "sleevelog"
+
 READ_OPERATIONS = {"GET", "LIST"}
 WRITE_OPERATIONS = {"CREATE", "PATCH", "UPDATE", "DELETE"}
 
@@ -26,14 +28,15 @@ def graph(data, versionmap):
             version = versionmap.get(read_event.id())
             if version:
                 annotations = version.status_conditions()
-                dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}{annotations}')
+                subtitle = f'\\n{annotations}' if annotations else ''
+                dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}{subtitle}')
             else:
                 print(f"Missing version for read event: {read_event.id()}")
                 dot.node(read_event.id(), f'{read_event.kind}:{shorter(read_event.object_id)}@{shorter(read_event.causal_id)}')
         for write_event in rw["writeset"]:
             dot.node(write_event.id(), f'{write_event.kind}:{shorter(write_event.object_id)}@{shorter(write_event.causal_id)}')
             for read_event in rw["readset"]:
-                dot.edge(read_event.id(), write_event.id(), label=shorter(reconcile_id), color=colors[reconcile_id])
+                dot.edge(read_event.id(), write_event.id(), label=shorter(reconcile_id), color=colors[reconcile_id], penwidth='2')
 
     # Add legend as a table
     legend_table = '<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">'
@@ -46,7 +49,9 @@ def graph(data, versionmap):
 
     dot.node('legend', legend_table, shape='plaintext')
 
-    dot.render('event_graph2', format='png', view=True)
+    outfile = f'event_graph-{int(time.time())}'
+
+    dot.render(outfile, format='png', view=True)
 
 
 @dataclass
@@ -177,19 +182,6 @@ def analyze(lines, versions):
             print(f"\t{event}")
 
     graph(reads_to_writes, versions)
-    # Generate event graph using graphviz
-
-
-    dot = Digraph(comment='Event Graph')
-    for reconcile_id, rw in reads_to_writes.items():
-        for read_event in rw["readset"]:
-            dot.node(read_event.object_id, f'{read_event.kind} ({read_event.object_id})')
-        for write_event in rw["writeset"]:
-            dot.node(write_event.object_id, f'{write_event.kind} ({write_event.object_id})')
-            for read_event in rw["readset"]:
-                dot.edge(read_event.object_id, write_event.object_id)
-
-    dot.render('event_graph', format='png')
 
 
 def readsets_to_writesets(events_by_reconcile_id):
@@ -206,8 +198,8 @@ def readsets_to_writesets(events_by_reconcile_id):
 def process(lines):
     # first, separate out controller observations
     # log lines from our instrumentation
-    content = [line for line in lines if "sleevelog" in line]
-    content = [line.split("sleevelog")[1].strip() for line in content]
+    content = [line for line in lines if SLEEVE_LOG_KEYWORD in line]
+    content = [line.split(SLEEVE_LOG_KEYWORD)[1].strip() for line in content]
 
     # split into conroller-operation and object-version
     controller_ops = [line for line in content if "sleeve:controller-operation" in line]
@@ -232,5 +224,6 @@ def main():
 
 if __name__ == "__main__":
     import sys
+    import time
 
     sys.exit(main())

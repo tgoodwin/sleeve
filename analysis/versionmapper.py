@@ -16,7 +16,7 @@ class Version:
 
         return Version(
             # TODO hacky
-            kind=obj.get("kind").split("Kind=")[1],
+            kind=obj.get("kind"),
             object_id=obj.get("object_id"),
             version=obj.get("version"),
             value=value
@@ -52,9 +52,13 @@ class Version:
 def process(lines):
     versions = {}
     for line in lines:
-        v = Version.from_json(line)
-        print(v.id())
-        versions[v.id()] = v
+        try:
+            v = Version.from_json(line)
+            print(v.id())
+            versions[v.id()] = v
+        except ValueError as e:
+            print(e)
+            continue
         # annotations = v.status_conditions()
         # # labels = v.labels()
         # causal_label = v.causal_id()
