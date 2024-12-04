@@ -12,7 +12,7 @@ type Recorder struct {
 	reconcilerID    string
 	effectContainer map[string]DataEffect
 
-	predicates []Predicate
+	predicates []*executionPredicate
 }
 
 func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error {
@@ -38,9 +38,9 @@ func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType s
 }
 
 func (r *Recorder) evaluatePredicates(_ context.Context, obj client.Object) {
-	for _, predicate := range r.predicates {
-		if predicate(obj) {
-			panic("predicate returned true")
+	for _, p := range r.predicates {
+		if p.evaluate(obj) {
+			p.satisfied = true
 		}
 	}
 }

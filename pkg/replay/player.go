@@ -26,7 +26,7 @@ type ReplayHarness struct {
 	// container for the effects that are recorded during replay
 	replayEffects map[string]DataEffect
 
-	predicates []Predicate
+	predicates []*executionPredicate
 }
 
 func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheFrame, effects map[string]DataEffect) *ReplayHarness {
@@ -37,12 +37,12 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheF
 		ReconcilerID:       reconcilerID,
 		tracedEffects:      effects,
 		replayEffects:      replayEffects,
-		predicates:         make([]Predicate, 0),
+		predicates:         make([]*executionPredicate, 0),
 	}
 }
 
 func (p *ReplayHarness) WithPredicate(predicate Predicate) *ReplayHarness {
-	p.predicates = append(p.predicates, predicate)
+	p.predicates = append(p.predicates, &executionPredicate{evaluate: predicate})
 	return p
 }
 
@@ -85,6 +85,14 @@ func (r *Player) Play() error {
 
 		fmt.Printf("Actual Readset:\n%s\n", formatEventList(r.harness.replayEffects[f.ID].Reads))
 		fmt.Printf("Actual Writeset:\n%s\n", formatEventList(r.harness.replayEffects[f.ID].Writes))
+
+		// check predicates
+		for _, p := range r.harness.predicates {
+			if p.satisfied {
+				fmt.Println("Predicate satisfied!!!")
+				// TODO return
+			}
+		}
 	}
 	return nil
 }

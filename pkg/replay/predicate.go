@@ -18,3 +18,8 @@ func ConditionPredicate(resourceType string, conditionName, conditionValue strin
 		return false
 	}
 }
+
+type executionPredicate struct {
+	satisfied bool
+	evaluate  Predicate
+}
