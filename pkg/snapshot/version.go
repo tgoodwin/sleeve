@@ -6,3 +6,20 @@ type VersionKey struct {
 	ObjectID string
 	Version  string
 }
+
+type KnowledgeSet map[VersionKey]struct{}
+
+func (ks KnowledgeSet) Add(vk VersionKey) {
+	ks[vk] = struct{}{}
+}
+
+// Diff returns the set difference between ks and other
+func (ks KnowledgeSet) Diff(other KnowledgeSet) KnowledgeSet {
+	diff := make(KnowledgeSet)
+	for key := range ks {
+		if _, found := other[key]; !found {
+			diff[key] = struct{}{}
+		}
+	}
+	return diff
+}

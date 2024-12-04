@@ -102,7 +102,7 @@ func (r Record) Diff(other Record) (string, error) {
 	if err := json.Unmarshal([]byte(other.Value), &otherObj); err != nil {
 		return "", err
 	}
-	reporter := DiffReporter{Prev: r, Curr: other}
+	reporter := DiffReporter{}
 	header := fmt.Sprintf("currVersion: %s\nprevVersion:%s", other.GetID(), r.GetID())
 	return fmt.Sprintf("%s\nDeltas:\n%s", header, computeDelta(reporter, &this, &otherObj)), nil
 }
@@ -132,4 +132,9 @@ func computeDelta(dr DiffReporter, old, new *unstructured.Unstructured) string {
 	cmp.Diff(old, new, cmpOpt, cmp.Reporter(&dr))
 	rdiff := dr.String()
 	return rdiff
+}
+
+func ComputeDelta(old, new *unstructured.Unstructured) string {
+	reporter := DiffReporter{}
+	return computeDelta(reporter, old, new)
 }

@@ -60,7 +60,7 @@ func (f *replayStore) HydrateFromTrace(traceData []byte) error {
 	return nil
 }
 
-func (f *replayStore) AllForKind(kind string) []*unstructured.Unstructured {
+func (f *replayStore) AllOfKind(kind string) []*unstructured.Unstructured {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
