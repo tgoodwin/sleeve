@@ -2,13 +2,10 @@ package replay
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
-	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -33,12 +30,13 @@ func frameIDFromContext(ctx context.Context) string {
 
 // Like the frames of a movie, a Frame is a snapshot of the state of the world at a particular point in time.
 type Frame struct {
-	// for ordering
+	// for ordering. In practice this is just a timestamp
 	sequenceID string
 	// snaps map[schema.GroupVersionKind]map[string]client.Object
 	ID  string
 	Req reconcile.Request
-	// Elements map[snapshot.VersionKey]struct{}
+
+	TraceyRootID string
 }
 
 // keyed by Type (Kind) and then by NamespacedName
@@ -138,7 +136,6 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 	effects := make(map[string]DataEffect)
 
 	for reconcileID, events := range byReconcileID {
-		earliestTs := events[0].Timestamp
 
 		reads, writes := event.FilterReadsWrites(events)
 		effects[reconcileID] = DataEffect{Reads: reads, Writes: writes}
@@ -151,7 +148,11 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 			return nil, err
 		}
 		frameData[reconcileID] = cacheFrame
-		frames = append(frames, Frame{ID: reconcileID, Req: req, sequenceID: earliestTs})
+
+		rootEventID := getRootIDFromEvents(events)
+
+		earliestTs := events[0].Timestamp
+		frames = append(frames, Frame{ID: reconcileID, Req: req, sequenceID: earliestTs, TraceyRootID: rootEventID})
 	}
 
 	// sort the frames by sequenceID
@@ -181,6 +182,9 @@ func (r *Builder) generateCacheFrame(events []event.Event) (CacheFrame, error) {
 
 func (r *Builder) inferReconcileRequestFromReadset(controllerID string, readset []event.Event) (reconcile.Request, error) {
 	for _, e := range readset {
+
+		// Assumption: reconcile routines are invoked upon a Resource that shares the same name (Kind)
+		// as the controller that is managing it.
 		if e.Kind == controllerID {
 			objKey := snapshot.VersionKey{Kind: e.Kind, ObjectID: e.ObjectID, Version: e.Version}
 			if obj, ok := r.store[objKey]; ok {
@@ -194,52 +198,26 @@ func (r *Builder) inferReconcileRequestFromReadset(controllerID string, readset 
 	return reconcile.Request{}, fmt.Errorf("could not infer reconcile.Request from readset")
 }
 
-type replayStore struct {
-	// indexes all of the objects in the trace
-	store map[snapshot.VersionKey]*unstructured.Unstructured
-	mu    sync.RWMutex
-}
-
-func newReplayStore() *replayStore {
-	return &replayStore{
-		store: make(map[snapshot.VersionKey]*unstructured.Unstructured),
-	}
-}
-
-func (f *replayStore) Add(r snapshot.Record) error {
-	// Unmarshal the value into an unstructured object
-	key := snapshot.VersionKey{Kind: r.Kind, ObjectID: r.ObjectID, Version: r.Version}
-	// fmt.Printf("adding key to store: %#v\n", key)
-	obj := unstructured.Unstructured{}
-	if err := json.Unmarshal([]byte(r.Value), &obj); err != nil {
-		return errors.Wrap(err, "unmarshaling record value")
-	}
-
-	// Generate the key using namespace/name
-	// key := obj.GetNamespace() + "/" + obj.GetName()
-	f.mu.Lock()
-	f.store[key] = &obj
-	f.mu.Unlock()
-
-	return nil
-}
-
-func (f *replayStore) HydrateFromTrace(traceData []byte) error {
-	lines := strings.Split(string(traceData), "\n")
-	records, err := ParseRecordsFromLines(lines)
-	if err != nil {
-		return err
-	}
-
-	for _, r := range records {
-		if err := f.Add(r); err != nil {
-			return err
+func getRootIDFromEvents(readset []event.Event) string {
+	readEventCounts := make(map[string]int)
+	for _, e := range readset {
+		if e.RootEventID != "" {
+			readEventCounts[e.RootEventID]++
 		}
 	}
-	fmt.Println("total record observations in trace", len(records))
-	fmt.Println("unique records in store after hydration", len(f.store))
-
-	return nil
+	// return the read event with the highest count
+	var maxCount int
+	var rootID string
+	for id, count := range readEventCounts {
+		if count > maxCount {
+			maxCount = count
+			rootID = id
+		}
+	}
+	if len(readEventCounts) > 1 {
+		fmt.Println("Multiple root event IDs found in readset:", readEventCounts)
+	}
+	return rootID
 }
 
 // func (f *replayStore) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
