@@ -146,7 +146,7 @@ func (c *Client) setReconcileID(ctx context.Context) {
 
 func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op OperationType) *event.Event {
 	return &event.Event{
-		Timestamp:    fmt.Sprintf("%d", time.Now().UnixNano()/int64(time.Millisecond)),
+		Timestamp:    event.FormatTimeStr(time.Now()),
 		ReconcileID:  reconcileID,
 		ControllerID: controllerID,
 		RootEventID:  rootEventID,
