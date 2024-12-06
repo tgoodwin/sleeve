@@ -41,6 +41,86 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheF
 	}
 }
 
+func (p *ReplayHarness) EffectfulFrames() []Frame {
+	out := make([]Frame, 0)
+	for _, f := range p.frames {
+		if len(p.tracedEffects[f.ID].Writes) > 0 {
+			return append(out, f)
+		}
+	}
+	return out
+}
+
+// return the index of the frame that is closest to the given timestamp while still preceding it
+func (p *ReplayHarness) priorFrame(ts string) int {
+	nearestIndex := -1
+	for i, f := range p.frames {
+		if f.sequenceID < ts {
+			nearestIndex = i
+		} else {
+			break
+		}
+	}
+	return nearestIndex
+}
+
+func (p *ReplayHarness) nextFrame(ts string) int {
+	for i, f := range p.frames {
+		if f.sequenceID > ts {
+			return i
+		}
+	}
+	return -1
+}
+
+func (p *ReplayHarness) nearestFrame(ts string) Frame {
+	upperIdx := p.nextFrame(ts)
+	lowerIdx := p.priorFrame(ts)
+
+	if upperIdx == -1 {
+		//return the last frame
+		return p.frames[len(p.frames)-1]
+	}
+	if lowerIdx == -1 {
+		//return the first frame
+		return p.frames[0]
+	}
+	if upperIdx == lowerIdx {
+		return p.frames[upperIdx]
+	}
+	if upperIdx-lowerIdx == 1 {
+		return p.frames[lowerIdx]
+	}
+	panic("ambiguous frame")
+}
+
+func (p *ReplayHarness) insertFrame(f Frame) {
+	ts := f.sequenceID
+	prevIdx := p.priorFrame(ts)
+	nextIdx := p.nextFrame(ts)
+
+	out := make([]Frame, 0)
+	if prevIdx == -1 {
+		out = append(out, f)
+		out = append(out, p.frames...)
+		p.frames = out
+		return
+	}
+	if nextIdx == -1 {
+		out = append(out, p.frames...)
+		out = append(out, f)
+		p.frames = out
+		return
+	}
+
+	priorFrames := p.frames[:prevIdx+1]
+	nextFrames := p.frames[nextIdx:]
+	out = append(out, priorFrames...)
+	out = append(out, f)
+	out = append(out, nextFrames...)
+	p.frames = out
+}
+
 func (p *ReplayHarness) WithPredicate(predicate Predicate) *ReplayHarness {
 	p.predicates = append(p.predicates, &executionPredicate{evaluate: predicate})
 	return p
@@ -69,14 +149,16 @@ type Player struct {
 
 func (r *Player) Play() error {
 	for _, f := range r.harness.frames {
-		// skip frames with no writes
-		if len(r.harness.tracedEffects[f.ID].Writes) == 0 {
+		// skip traced frames with no writes
+		if f.Type == FrameTypeTraced && len(r.harness.tracedEffects[f.ID].Writes) == 0 {
 			continue
 		}
 		ctx := withFrameID(context.Background(), f.ID)
-		fmt.Printf("Replaying frame %s for controller %s\n", f.ID, r.harness.ReconcilerID)
-		fmt.Printf("Traced Readset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Reads))
-		fmt.Printf("Traced Writeset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Writes))
+		fmt.Printf("Replaying %s frame %s for controller %s\n", f.Type, f.ID, r.harness.ReconcilerID)
+		if f.Type == FrameTypeTraced {
+			fmt.Printf("Traced Readset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Reads))
+			fmt.Printf("Traced Writeset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Writes))
+		}
 
 		if _, err := r.reconciler.Reconcile(ctx, f.Req); err != nil {
 			fmt.Println("Error during replay:", err)
@@ -90,7 +172,7 @@ func (r *Player) Play() error {
 		for _, p := range r.harness.predicates {
 			if p.satisfied {
 				fmt.Println("Predicate satisfied!!!")
-				// TODO return
+				return nil
 			}
 		}
 	}
