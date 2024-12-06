@@ -49,9 +49,7 @@ def graph(data, versionmap):
 
     dot.node('legend', legend_table, shape='plaintext')
 
-    outfile = f'event_graph-{int(time.time())}'
-
-    dot.render(outfile, format='png', view=True)
+    dot.render(args.outfile, format='png', view=True)
 
 
 @dataclass
@@ -212,18 +210,21 @@ def process(lines):
     analyze(controller_ops, versions)
 
 
-
 def main():
-    if len(sys.argv) > 1:
-        with open(sys.argv[1], "r") as infile:
-            lines = infile.readlines()
-            process(lines)
+    with open(args.logfile, "r") as infile:
+        lines = infile.readlines()
+        process(lines)
 
     return 0
-
 
 if __name__ == "__main__":
     import sys
     import time
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Process sleeve log files into an event graph.")
+    parser.add_argument("logfile", help="Path to the log file")
+    parser.add_argument("--outfile", help="Name of the output file", default=f'event_graph-{int(time.time())}')
+    args = parser.parse_args()
 
     sys.exit(main())
