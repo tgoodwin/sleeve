@@ -1,7 +1,6 @@
 package replay
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,36 +13,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-type frameIDKey struct{}
-
-func withFrameID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, frameIDKey{}, id)
-}
-
-func frameIDFromContext(ctx context.Context) string {
-	id, ok := ctx.Value(frameIDKey{}).(string)
-	if !ok {
-		return ""
-	}
-	return id
-}
-
-// Like the frames of a movie, a Frame is a snapshot of the state of the world at a particular point in time.
-type Frame struct {
-	// for ordering. In practice this is just a timestamp
-	sequenceID string
-	// snaps map[schema.GroupVersionKind]map[string]client.Object
-	ID  string
-	Req reconcile.Request
-
-	TraceyRootID string
-}
-
 // keyed by Type (Kind) and then by NamespacedName
-type CacheFrame map[string]map[types.NamespacedName]*unstructured.Unstructured
+type frameData map[string]map[types.NamespacedName]*unstructured.Unstructured
 
-func DumpCacheFrameContents(c CacheFrame) {
-	fmt.Println("CacheFrame contents:")
+func (c frameData) Copy() frameData {
+	newFrame := make(frameData)
+	for kind, objs := range c {
+		newFrame[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
+		for nn, obj := range objs {
+			newFrame[kind][nn] = obj
+		}
+	}
+	return newFrame
+}
+
+func (c frameData) Dump() {
 	for kind, objs := range c {
 		for nn := range objs {
 			fmt.Printf("\t%s/%s/%s\n", kind, nn.Namespace, nn.Name)
@@ -131,7 +115,7 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 		return e.ReconcileID
 	})
 
-	frameData := make(map[string]CacheFrame)
+	frameData := make(map[string]frameData)
 	frames := make([]Frame, 0)
 	effects := make(map[string]DataEffect)
 
@@ -151,8 +135,10 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 
 		rootEventID := getRootIDFromEvents(events)
 
+		// TODO revisit this
 		earliestTs := events[0].Timestamp
-		frames = append(frames, Frame{ID: reconcileID, Req: req, sequenceID: earliestTs, TraceyRootID: rootEventID})
+
+		frames = append(frames, Frame{Type: FrameTypeTraced, ID: reconcileID, Req: req, sequenceID: earliestTs, TraceyRootID: rootEventID})
 	}
 
 	// sort the frames by sequenceID
@@ -164,8 +150,8 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 	return harness, nil
 }
 
-func (r *Builder) generateCacheFrame(events []event.Event) (CacheFrame, error) {
-	cacheFrame := make(CacheFrame)
+func (r *Builder) generateCacheFrame(events []event.Event) (frameData, error) {
+	cacheFrame := make(frameData)
 	for _, e := range events {
 		key := snapshot.VersionKey{Kind: e.Kind, ObjectID: e.ObjectID, Version: e.Version}
 		if obj, ok := r.store[key]; ok {

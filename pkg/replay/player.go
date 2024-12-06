@@ -18,7 +18,7 @@ type DataEffect struct {
 type ReplayHarness struct {
 	ReconcilerID       string
 	frames             []Frame
-	frameDataByFrameID map[string]CacheFrame
+	frameDataByFrameID map[string]frameData
 
 	// trace data effect by frameID (reconcileID)
 	tracedEffects map[string]DataEffect
@@ -29,7 +29,7 @@ type ReplayHarness struct {
 	predicates []*executionPredicate
 }
 
-func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheFrame, effects map[string]DataEffect) *ReplayHarness {
+func newHarness(reconcilerID string, frames []Frame, frameData map[string]frameData, effects map[string]DataEffect) *ReplayHarness {
 	replayEffects := make(map[string]DataEffect)
 	return &ReplayHarness{
 		frames:             frames,

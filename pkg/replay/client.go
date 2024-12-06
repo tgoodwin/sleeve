@@ -24,13 +24,13 @@ type EffectRecorder interface {
 type Client struct {
 	// dummyClient is a useless type that implements the remainder of the client.Client interface
 	*dummyClient
-	framesByID     map[string]CacheFrame
+	framesByID     map[string]frameData
 	effectRecorder EffectRecorder
 
 	scheme *runtime.Scheme
 }
 
-func NewClient(scheme *runtime.Scheme, frameData map[string]CacheFrame, effectRecorder EffectRecorder) *Client {
+func NewClient(scheme *runtime.Scheme, frameData map[string]frameData, effectRecorder EffectRecorder) *Client {
 	return &Client{
 		scheme:         scheme,
 		dummyClient:    &dummyClient{},
@@ -94,7 +94,6 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	return nil
 }
 
-// TODO
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	frameID := frameIDFromContext(ctx)
 	kind := inferListKind(list)
@@ -111,9 +110,10 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 			itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
 			itemsValue.Set(reflect.ValueOf(objs))
 		}
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("frame %s not found", frameID)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
