@@ -60,7 +60,7 @@ func BackfillLabels(events []*event.Event) []*event.Event {
 }
 
 func getNodeName(e *event.Event) string {
-	return fmt.Sprintf("%s:%s:%s", e.Kind, util.Shorter(e.ObjectID), util.Shorter(e.CausalID().String()))
+	return fmt.Sprintf("%s:%s:%s", e.Kind, util.Shorter(e.ObjectID), util.Shorter(e.CausalKey().String()))
 }
 
 func Graph(events []*event.Event) {
@@ -96,7 +96,7 @@ func Graph(events []*event.Event) {
 			w, _ := graph.CreateNodeByName(getNodeName(writeEvent))
 			for _, readEvent := range readEvents {
 				r, _ := graph.CreateNodeByName(getNodeName(readEvent))
-				e, _ := graph.CreateEdgeByName(fmt.Sprintf("%s:%s", readEvent.CausalID().String(), writeEvent.CausalID().String()), r, w)
+				e, _ := graph.CreateEdgeByName(fmt.Sprintf("%s:%s", readEvent.CausalKey().String(), writeEvent.CausalKey().String()), r, w)
 				e.SetLabel(util.Shorter(rid))
 			}
 		}

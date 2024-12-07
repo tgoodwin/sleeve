@@ -1,42 +1,40 @@
 package replay
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 type replayStore struct {
 	// indexes all of the objects in the trace
-	store map[snapshot.VersionKey]*unstructured.Unstructured
+	store map[event.CausalKey]*unstructured.Unstructured
 	mu    sync.RWMutex
 }
 
 func newReplayStore() *replayStore {
 	return &replayStore{
-		store: make(map[snapshot.VersionKey]*unstructured.Unstructured),
+		store: make(map[event.CausalKey]*unstructured.Unstructured),
 	}
 }
 
 func (f *replayStore) Add(r snapshot.Record) error {
 	// Unmarshal the value into an unstructured object
-	key := snapshot.VersionKey{Kind: r.Kind, ObjectID: r.ObjectID, Version: r.Version}
-	// fmt.Printf("adding key to store: %#v\n", key)
-	obj := unstructured.Unstructured{}
-	if err := json.Unmarshal([]byte(r.Value), &obj); err != nil {
-		return errors.Wrap(err, "unmarshaling record value")
+	// key := snapshot.VersionKey{Kind: r.Kind, ObjectID: r.ObjectID, Version: r.Version}
+	obj := r.ToUnstructured()
+	key, err := event.GetCausalKey(obj)
+	if err != nil {
+		return errors.Wrap(err, "inserting object into replay store")
 	}
 
-	// Generate the key using namespace/name
-	// key := obj.GetNamespace() + "/" + obj.GetName()
 	f.mu.Lock()
-	f.store[key] = &obj
+	f.store[key] = obj
 	f.mu.Unlock()
 
 	return nil
@@ -51,7 +49,8 @@ func (f *replayStore) HydrateFromTrace(traceData []byte) error {
 
 	for _, r := range records {
 		if err := f.Add(r); err != nil {
-			return err
+			fmt.Printf("error adding record to store: %v\n", r.ObjectID)
+			continue
 		}
 	}
 	fmt.Println("total record observations in trace", len(records))

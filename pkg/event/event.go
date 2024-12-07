@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
 type Event struct {
@@ -21,6 +23,31 @@ type Event struct {
 // Ensure Event implements the json.Marshaler and json.Unmarshaler interfaces
 var _ json.Marshaler = (*Event)(nil)
 var _ json.Unmarshaler = (*Event)(nil)
+
+func (e *Event) CausalKey() CausalKey {
+	return CausalKey{
+		Kind:     e.Kind,
+		ObjectID: e.ObjectID,
+		Version:  e.ChangeID(),
+	}
+}
+
+func (e *Event) ChangeID() ChangeID {
+	if changeID, ok := e.Labels["discrete.events/change-id"]; ok {
+		return ChangeID(changeID)
+	}
+
+	// when there has not been a change yet, only reads
+	if rootID, ok := e.Labels["discrete.events/root-event-id"]; ok {
+		return ChangeID(rootID)
+	}
+	// case where its a top-level GET event from a declared resource that has only
+	// been tagged by the webhook with a tracey-uid
+	if rootID, ok := e.Labels["tracey-uid"]; ok {
+		return ChangeID(rootID)
+	}
+	return ChangeID("")
+}
 
 func (e *Event) UnmarshalJSON(data []byte) error {
 	type Alias Event
@@ -87,4 +114,22 @@ func (e Event) MarshalJSON() ([]byte, error) {
 
 	// Marshal the final map to JSON
 	return json.Marshal(dataMap)
+}
+
+func (e Event) VersionKey() snapshot.VersionKey {
+	return snapshot.VersionKey{
+		Kind:     e.Kind,
+		ObjectID: e.ObjectID,
+		Version:  string(e.ChangeID()),
+	}
+}
+
+func Earliest(events []Event) Event {
+	earliest := events[0]
+	for _, e := range events {
+		if e.Timestamp < earliest.Timestamp {
+			earliest = e
+		}
+	}
+	return earliest
 }

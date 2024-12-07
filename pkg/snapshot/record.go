@@ -7,14 +7,24 @@ import (
 	"regexp"
 
 	"github.com/tgoodwin/sleeve/pkg/util"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Record represents a snapshot of a Kubernetes object as it appears in a Sleeve log
 type Record struct {
 	ObjectID string `json:"object_id"`
 	Kind     string `json:"kind"`
 	Version  string `json:"version"`
 	Value    string `json:"value"`
+}
+
+func (r Record) ToUnstructured() *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	if err := json.Unmarshal([]byte(r.Value), u); err != nil {
+		log.Fatalf("Error unmarshaling JSON to unstructured: %v", err)
+	}
+	return u
 }
 
 func (r Record) GetID() string {

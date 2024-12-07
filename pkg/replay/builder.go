@@ -7,7 +7,6 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -88,9 +87,10 @@ func (b *Builder) fromTrace(traceData []byte) error {
 	// for each read event, sanity check that the object is in the store
 	// if not, return an error
 	for _, e := range readEvents {
-		key := snapshot.VersionKey{Kind: e.Kind, ObjectID: e.ObjectID, Version: e.Version}
+		key := e.CausalKey()
 		if _, ok := b.store[key]; !ok {
-			return fmt.Errorf("object not found in store: %#v", key)
+			fmt.Printf("WARNING: object not found in store: %#v\n", key)
+			continue
 		}
 		b.reconcilerIDs[e.ControllerID] = struct{}{}
 	}
@@ -153,7 +153,7 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 func (r *Builder) generateCacheFrame(events []event.Event) (frameData, error) {
 	cacheFrame := make(frameData)
 	for _, e := range events {
-		key := snapshot.VersionKey{Kind: e.Kind, ObjectID: e.ObjectID, Version: e.Version}
+		key := e.CausalKey()
 		if obj, ok := r.store[key]; ok {
 			if _, ok := cacheFrame[e.Kind]; !ok {
 				cacheFrame[e.Kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
@@ -168,12 +168,10 @@ func (r *Builder) generateCacheFrame(events []event.Event) (frameData, error) {
 
 func (r *Builder) inferReconcileRequestFromReadset(controllerID string, readset []event.Event) (reconcile.Request, error) {
 	for _, e := range readset {
-
 		// Assumption: reconcile routines are invoked upon a Resource that shares the same name (Kind)
 		// as the controller that is managing it.
 		if e.Kind == controllerID {
-			objKey := snapshot.VersionKey{Kind: e.Kind, ObjectID: e.ObjectID, Version: e.Version}
-			if obj, ok := r.store[objKey]; ok {
+			if obj, ok := r.store[e.CausalKey()]; ok {
 				name := obj.GetName()
 				namespace := obj.GetNamespace()
 				req := reconcile.Request{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}
