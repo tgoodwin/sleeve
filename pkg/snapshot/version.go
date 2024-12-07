@@ -1,25 +1,12 @@
 package snapshot
 
-// VersionKey uniquely identifies the state of an object at a given version
+import "github.com/tgoodwin/sleeve/pkg/util"
+
+// VersionKey uniquely identifies the state of an object at a given resource version
 type VersionKey struct {
 	Kind     string
-	ObjectID string
+	ObjectID string // TODO don't always diff on object ID as it is not yet present in create events
 	Version  string
 }
 
-type KnowledgeSet map[VersionKey]struct{}
-
-func (ks KnowledgeSet) Add(vk VersionKey) {
-	ks[vk] = struct{}{}
-}
-
-// Diff returns the set difference between ks and other
-func (ks KnowledgeSet) Diff(other KnowledgeSet) KnowledgeSet {
-	diff := make(KnowledgeSet)
-	for key := range ks {
-		if _, found := other[key]; !found {
-			diff[key] = struct{}{}
-		}
-	}
-	return diff
-}
+type KnowledgeSet util.Set[VersionKey]
