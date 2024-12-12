@@ -2,7 +2,10 @@ package replay
 
 import (
 	"context"
+	"fmt"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -28,7 +31,7 @@ type Frame struct {
 
 type frameIDKey struct{}
 
-func withFrameID(ctx context.Context, id string) context.Context {
+func WithFrameID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, frameIDKey{}, id)
 }
 
@@ -38,4 +41,25 @@ func frameIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	return id
+}
+
+type FrameData map[string]map[types.NamespacedName]*unstructured.Unstructured
+
+func (c FrameData) Copy() FrameData {
+	newFrame := make(FrameData)
+	for kind, objs := range c {
+		newFrame[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
+		for nn, obj := range objs {
+			newFrame[kind][nn] = obj
+		}
+	}
+	return newFrame
+}
+
+func (c FrameData) Dump() {
+	for kind, objs := range c {
+		for nn := range objs {
+			fmt.Printf("\t%s/%s/%s\n", kind, nn.Namespace, nn.Name)
+		}
+	}
 }

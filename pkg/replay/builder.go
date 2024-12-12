@@ -12,28 +12,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// keyed by Type (Kind) and then by NamespacedName
-type frameData map[string]map[types.NamespacedName]*unstructured.Unstructured
-
-func (c frameData) Copy() frameData {
-	newFrame := make(frameData)
-	for kind, objs := range c {
-		newFrame[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
-		for nn, obj := range objs {
-			newFrame[kind][nn] = obj
-		}
-	}
-	return newFrame
-}
-
-func (c frameData) Dump() {
-	for kind, objs := range c {
-		for nn := range objs {
-			fmt.Printf("\t%s/%s/%s\n", kind, nn.Namespace, nn.Name)
-		}
-	}
-}
-
 func ParseTrace(traceData []byte) (*Builder, error) {
 	b := &Builder{}
 	if err := b.fromTrace(traceData); err != nil {
@@ -115,7 +93,7 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 		return e.ReconcileID
 	})
 
-	frameData := make(map[string]frameData)
+	FrameData := make(map[string]FrameData)
 	frames := make([]Frame, 0)
 	effects := make(map[string]DataEffect)
 
@@ -131,7 +109,7 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 		if err != nil {
 			return nil, err
 		}
-		frameData[reconcileID] = cacheFrame
+		FrameData[reconcileID] = cacheFrame
 
 		rootEventID := getRootIDFromEvents(events)
 
@@ -146,12 +124,12 @@ func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
 		return frames[i].sequenceID < frames[j].sequenceID
 	})
 
-	harness := newHarness(controllerID, frames, frameData, effects)
+	harness := newHarness(controllerID, frames, FrameData, effects)
 	return harness, nil
 }
 
-func (r *Builder) generateCacheFrame(events []event.Event) (frameData, error) {
-	cacheFrame := make(frameData)
+func (r *Builder) generateCacheFrame(events []event.Event) (FrameData, error) {
+	cacheFrame := make(FrameData)
 	for _, e := range events {
 		key := e.CausalKey()
 		if obj, ok := r.store[key]; ok {
