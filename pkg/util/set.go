@@ -19,3 +19,22 @@ func (s Set[T]) Diff(other Set[T]) Set[T] {
 	}
 	return result
 }
+
+func (s Set[T]) Union(other Set[T]) Set[T] {
+	result := NewSet[T]()
+	for item := range s {
+		result.Add(item)
+	}
+	for item := range other {
+		result.Add(item)
+	}
+	return result
+}
+
+func (s Set[T]) List() []T {
+	result := make([]T, 0, len(s))
+	for item := range s {
+		result = append(result, item)
+	}
+	return result
+}
