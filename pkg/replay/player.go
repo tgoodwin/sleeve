@@ -10,15 +10,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-type DataEffect struct {
-	Reads  []event.Event
-	Writes []event.Event
-}
-
 type ReplayHarness struct {
 	ReconcilerID       string
 	frames             []Frame
-	frameDataByFrameID map[string]frameData
+	frameDataByFrameID map[string]FrameData
 
 	// trace data effect by frameID (reconcileID)
 	tracedEffects map[string]DataEffect
@@ -29,7 +24,7 @@ type ReplayHarness struct {
 	predicates []*executionPredicate
 }
 
-func newHarness(reconcilerID string, frames []Frame, frameData map[string]frameData, effects map[string]DataEffect) *ReplayHarness {
+func newHarness(reconcilerID string, frames []Frame, frameData map[string]FrameData, effects map[string]DataEffect) *ReplayHarness {
 	replayEffects := make(map[string]DataEffect)
 	return &ReplayHarness{
 		frames:             frames,
@@ -132,7 +127,7 @@ func (p *ReplayHarness) ReplayClient(scheme *runtime.Scheme) *Client {
 		effectContainer: p.replayEffects,
 		predicates:      p.predicates,
 	}
-	return NewClient(scheme, p.frameDataByFrameID, recorder)
+	return NewClient(p.ReconcilerID, scheme, p.frameDataByFrameID, recorder)
 }
 
 func (p *ReplayHarness) Load(r reconcile.Reconciler) *Player {
@@ -153,7 +148,7 @@ func (r *Player) Play() error {
 		if f.Type == FrameTypeTraced && len(r.harness.tracedEffects[f.ID].Writes) == 0 {
 			continue
 		}
-		ctx := withFrameID(context.Background(), f.ID)
+		ctx := WithFrameID(context.Background(), f.ID)
 		fmt.Printf("Replaying %s frame %s for controller %s\n", f.Type, f.ID, r.harness.ReconcilerID)
 		if f.Type == FrameTypeTraced {
 			fmt.Printf("Traced Readset:\n%s\n", formatEventList(r.harness.tracedEffects[f.ID].Reads))

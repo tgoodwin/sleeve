@@ -2,11 +2,22 @@ package replay
 
 import (
 	"context"
+	"errors"
 
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type DataEffect struct {
+	Reads  []event.Event
+	Writes []event.Event
+}
+
+type EffectHandler interface {
+	Record(frameID string, de DataEffect) error
+	Retrieve(frameID string) (DataEffect, bool)
+}
 
 type Recorder struct {
 	reconcilerID    string
@@ -14,6 +25,21 @@ type Recorder struct {
 
 	predicates []*executionPredicate
 }
+
+func (r *Recorder) Record(frameID string, de DataEffect) error {
+	if _, ok := r.effectContainer[frameID]; ok {
+		return errors.New("effect already recorded for frame")
+	}
+	r.effectContainer[frameID] = de
+	return nil
+}
+
+func (r *Recorder) Retrieve(frameID string) (DataEffect, bool) {
+	de, ok := r.effectContainer[frameID]
+	return de, ok
+}
+
+var _ EffectHandler = (*Recorder)(nil)
 
 func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error {
 	reconcileID := frameIDFromContext(ctx)
