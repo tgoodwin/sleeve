@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/google/uuid"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -153,7 +152,7 @@ func (b *Builder) InterpolateFrames(controllerID string, missedKnowledge util.Se
 		}
 		data[storeObj.GetKind()][overwriteKey] = storeObj
 
-		newFrameID := uuid.New().String()
+		newFrameID := util.UUID()
 		newFrame := Frame{
 			Type:         FrameTypeSynthetic,
 			ID:           newFrameID,

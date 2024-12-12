@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/google/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -28,4 +29,8 @@ func GetKind(obj client.Object) string {
 		kind = t.Name()
 	}
 	return kind
+}
+
+func UUID() string {
+	return uuid.New().String()
 }
